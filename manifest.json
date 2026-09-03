@@ -1,0 +1,47 @@
+{
+  "manifest_version": 3,
+  "name": "随手复制",
+  "version": "1.0.0",
+  "description": "在网页右侧保存常用文本，单击卡片即可复制。",
+  "minimum_chrome_version": "102",
+  "permissions": [
+    "storage"
+  ],
+  "action": {
+    "default_title": "展开或收起随手复制"
+  },
+  "background": {
+    "service_worker": "src/background.js"
+  },
+  "content_scripts": [
+    {
+      "matches": [
+        "<all_urls>"
+      ],
+      "js": [
+        "src/model.js",
+        "src/content.js"
+      ],
+      "run_at": "document_idle"
+    }
+  ],
+  "web_accessible_resources": [
+    {
+      "resources": [
+        "src/panel.css"
+      ],
+      "matches": [
+        "<all_urls>"
+      ]
+    }
+  ],
+  "commands": {
+    "toggle-panel": {
+      "suggested_key": {
+        "default": "Alt+Shift+C",
+        "mac": "MacCtrl+Shift+C"
+      },
+      "description": "展开或收起随手复制面板"
+    }
+  }
+}
