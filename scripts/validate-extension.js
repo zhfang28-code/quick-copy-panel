@@ -6,6 +6,9 @@ const path = require("node:path");
 const projectRoot = path.resolve(__dirname, "..");
 const manifestPath = path.join(projectRoot, "manifest.json");
 const manifest = JSON.parse(fs.readFileSync(manifestPath, "utf8"));
+const packageJson = JSON.parse(
+  fs.readFileSync(path.join(projectRoot, "package.json"), "utf8")
+);
 const errors = [];
 
 if (manifest.manifest_version !== 3) {
@@ -14,6 +17,10 @@ if (manifest.manifest_version !== 3) {
 
 if (!/^\d+\.\d+\.\d+$/.test(manifest.version || "")) {
   errors.push("version must use x.y.z format");
+}
+
+if (manifest.version !== packageJson.version) {
+  errors.push("manifest.json and package.json versions must match");
 }
 
 const declaredFiles = [

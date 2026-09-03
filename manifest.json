@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
   "name": "随手复制",
-  "version": "1.0.0",
-  "description": "在网页右侧保存常用文本，单击卡片即可复制。",
+  "version": "1.1.0",
+  "description": "在网页右侧分级管理常用文本，进入分类后单击即可复制。",
   "minimum_chrome_version": "102",
   "permissions": [
     "storage"
