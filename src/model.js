@@ -11,7 +11,7 @@
 })(typeof globalThis !== "undefined" ? globalThis : this, function createModelApi() {
   "use strict";
 
-  const SCHEMA_VERSION = 2;
+  const SCHEMA_VERSION = 3;
   const MAX_GROUPS = 100;
   const MAX_SNIPPETS = 500;
   const MAX_GROUP_NAME_LENGTH = 50;
@@ -48,6 +48,10 @@
 
   function cleanTimestamp(value, fallback) {
     return Number.isFinite(value) && value > 0 ? value : fallback;
+  }
+
+  function cleanOrder(value, fallback) {
+    return Number.isFinite(value) ? value : fallback;
   }
 
   function cleanId(value) {
@@ -98,6 +102,7 @@
         id,
         name,
         description: cleanSingleLine(raw.description, MAX_GROUP_DESCRIPTION_LENGTH),
+        order: cleanOrder(raw.order, index),
         createdAt,
         updatedAt
       });
@@ -123,6 +128,7 @@
         groupId: cleanId(raw.groupId),
         title,
         content,
+        order: cleanOrder(raw.order, index),
         createdAt,
         updatedAt
       });
@@ -146,6 +152,7 @@
           id,
           name: "未分类",
           description: candidate.version === 1 ? "从旧版本自动迁移的内容" : "尚未归入其他分类的内容",
+          order: groups.length,
           createdAt: oldestSnippetTime,
           updatedAt: newestSnippetTime
         };
@@ -169,16 +176,29 @@
       latestSnippetByGroup.set(snippet.groupId, Math.max(current, snippet.updatedAt));
     }
 
-    groups = groups.map((group) => ({
-      ...group,
-      updatedAt: Math.max(group.updatedAt, latestSnippetByGroup.get(group.id) || 0)
-    }));
+    const hasSavedOrder = candidate.version >= SCHEMA_VERSION;
+    groups = groups
+      .map((group) => ({
+        ...group,
+        updatedAt: Math.max(group.updatedAt, latestSnippetByGroup.get(group.id) || 0)
+      }))
+      .sort(hasSavedOrder ? compareByOrder : compareByUpdatedAt)
+      .map((group, index) => ({ ...group, order: index }));
+
+    const orderedSnippets = [];
+    for (const group of groups) {
+      const children = snippets
+        .filter((snippet) => snippet.groupId === group.id)
+        .sort(hasSavedOrder ? compareByOrder : compareByUpdatedAt)
+        .map((snippet, index) => ({ ...snippet, order: index }));
+      orderedSnippets.push(...children);
+    }
 
     return {
       version: SCHEMA_VERSION,
       collapsed: candidate.collapsed === true,
       groups,
-      snippets
+      snippets: orderedSnippets
     };
   }
 
@@ -197,6 +217,7 @@
         values && values.description,
         MAX_GROUP_DESCRIPTION_LENGTH
       ),
+      order: cleanOrder(settings.order, 0),
       createdAt: now,
       updatedAt: now
     };
@@ -242,6 +263,7 @@
       groupId,
       title,
       content,
+      order: cleanOrder(settings.order, 0),
       createdAt: now,
       updatedAt: now
     };
@@ -288,7 +310,7 @@
           return tokens.every((token) => searchable.includes(token));
         });
 
-    return sortByUpdatedAt(filtered);
+    return sortByOrder(filtered);
   }
 
   function filterSnippets(snippets, query) {
@@ -301,7 +323,7 @@
           return tokens.every((token) => searchable.includes(token));
         });
 
-    return sortByUpdatedAt(filtered);
+    return sortByOrder(filtered);
   }
 
   function searchTokens(query) {
@@ -310,16 +332,55 @@
       : [];
   }
 
-  function sortByUpdatedAt(items) {
-    return items.sort((left, right) => {
-      if (right.updatedAt !== left.updatedAt) {
-        return right.updatedAt - left.updatedAt;
-      }
+  function sortByOrder(items) {
+    return items.sort(compareByOrder);
+  }
 
-      const leftName = left.name || left.title;
-      const rightName = right.name || right.title;
-      return leftName.localeCompare(rightName, "zh-CN");
-    });
+  function compareByOrder(left, right) {
+    const orderDifference = cleanOrder(left.order, Number.MAX_SAFE_INTEGER)
+      - cleanOrder(right.order, Number.MAX_SAFE_INTEGER);
+    return orderDifference || compareByUpdatedAt(left, right);
+  }
+
+  function compareByUpdatedAt(left, right) {
+    if (right.updatedAt !== left.updatedAt) {
+      return right.updatedAt - left.updatedAt;
+    }
+
+    const leftName = left.name || left.title;
+    const rightName = right.name || right.title;
+    return leftName.localeCompare(rightName, "zh-CN");
+  }
+
+  function leadingOrder(items) {
+    const list = Array.isArray(items) ? items : [];
+    if (list.length === 0) {
+      return 0;
+    }
+
+    return Math.min(...list.map((item) => cleanOrder(item.order, 0))) - 1;
+  }
+
+  function reorderItems(items, sourceId, targetId, placeAfter) {
+    const ordered = sortByOrder(Array.isArray(items) ? items.slice() : []);
+    const sourceIndex = ordered.findIndex((item) => item.id === sourceId);
+    if (sourceIndex === -1) {
+      return ordered.map((item, index) => ({ ...item, order: index }));
+    }
+
+    const [source] = ordered.splice(sourceIndex, 1);
+    if (targetId === null || targetId === undefined) {
+      ordered.push(source);
+    } else {
+      const targetIndex = ordered.findIndex((item) => item.id === targetId);
+      if (targetIndex === -1) {
+        ordered.splice(sourceIndex, 0, source);
+      } else {
+        ordered.splice(targetIndex + (placeAfter ? 1 : 0), 0, source);
+      }
+    }
+
+    return ordered.map((item, index) => ({ ...item, order: index }));
   }
 
   function createId(prefix, now) {
@@ -347,6 +408,8 @@
     createSnippet,
     updateSnippet,
     filterGroups,
-    filterSnippets
+    filterSnippets,
+    leadingOrder,
+    reorderItems
   };
 });

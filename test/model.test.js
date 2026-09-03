@@ -4,9 +4,9 @@ const test = require("node:test");
 const assert = require("node:assert/strict");
 const model = require("../src/model.js");
 
-test("createDefaultState returns an empty version 2 hierarchy", () => {
+test("createDefaultState returns an empty version 3 hierarchy", () => {
   assert.deepEqual(model.createDefaultState(), {
-    version: 2,
+    version: 3,
     collapsed: false,
     groups: [],
     snippets: []
@@ -35,15 +35,19 @@ test("normalizeState migrates version 1 flat snippets into 未分类", () => {
     ]
   });
 
-  assert.equal(migrated.version, 2);
+  assert.equal(migrated.version, 3);
   assert.equal(migrated.collapsed, true);
   assert.equal(migrated.groups.length, 1);
   assert.equal(migrated.groups[0].name, "未分类");
   assert.equal(migrated.groups[0].description, "从旧版本自动迁移的内容");
   assert.equal(migrated.snippets.length, 2);
   assert.ok(migrated.snippets.every((snippet) => snippet.groupId === migrated.groups[0].id));
-  assert.equal(migrated.snippets[0].title, "邮箱");
-  assert.equal(migrated.snippets[0].content, "  name@example.com  ");
+  assert.deepEqual(migrated.snippets.map((snippet) => snippet.title), ["奖项", "邮箱"]);
+  assert.deepEqual(migrated.snippets.map((snippet) => snippet.order), [0, 1]);
+  assert.equal(
+    migrated.snippets.find((snippet) => snippet.title === "邮箱").content,
+    "  name@example.com  "
+  );
   assert.equal(migrated.groups[0].updatedAt, 400);
 });
 
@@ -62,8 +66,8 @@ test("normalizeState keeps valid hierarchy and rescues orphaned snippets", () =>
     ]
   });
 
-  assert.equal(normalized.groups[0].name, "个人 信息");
-  assert.equal(normalized.groups[0].description, "常用 资料");
+  const personalGroup = normalized.groups.find((group) => group.name === "个人 信息");
+  assert.equal(personalGroup.description, "常用 资料");
   assert.equal(new Set(normalized.groups.map((group) => group.id)).size, normalized.groups.length);
   assert.equal(normalized.snippets.length, 2);
   assert.ok(normalized.groups.some((group) => group.name === "未分类"));
@@ -81,6 +85,7 @@ test("createGroup and updateGroup validate and normalize values", () => {
     id: "group-fixed",
     name: "获奖 经历",
     description: "竞赛 相关 内容",
+    order: 0,
     createdAt: 1234,
     updatedAt: 1234
   });
@@ -104,6 +109,7 @@ test("createSnippet requires a group and preserves exact body formatting", () =>
     groupId: "group-1",
     title: "地址",
     content: "第一行\n  第二行  ",
+    order: 0,
     createdAt: 500,
     updatedAt: 500
   });
@@ -149,4 +155,44 @@ test("filterSnippets searches all tokens and update preserves hierarchy", () => 
   assert.equal(updated.groupId, "g1");
   assert.equal(updated.createdAt, 1);
   assert.equal(updated.updatedAt, 900);
+});
+
+test("version 2 migration captures the previously visible updated-time order", () => {
+  const normalized = model.normalizeState({
+    version: 2,
+    groups: [
+      { id: "older", name: "较早更新", description: "", createdAt: 1, updatedAt: 10 },
+      { id: "newer", name: "最近更新", description: "", createdAt: 2, updatedAt: 30 }
+    ],
+    snippets: [
+      { id: "a", groupId: "newer", title: "旧内容", content: "A", createdAt: 1, updatedAt: 20 },
+      { id: "b", groupId: "newer", title: "新内容", content: "B", createdAt: 2, updatedAt: 40 }
+    ]
+  });
+
+  assert.deepEqual(normalized.groups.map((group) => group.id), ["newer", "older"]);
+  assert.deepEqual(normalized.groups.map((group) => group.order), [0, 1]);
+  assert.deepEqual(normalized.snippets.map((snippet) => snippet.id), ["b", "a"]);
+  assert.deepEqual(normalized.snippets.map((snippet) => snippet.order), [0, 1]);
+});
+
+test("version 3 normalization and reorderItems preserve custom card positions", () => {
+  const normalized = model.normalizeState({
+    version: 3,
+    groups: [
+      { id: "first", name: "手动置顶", description: "", order: 0, createdAt: 1, updatedAt: 10 },
+      { id: "second", name: "最近更新", description: "", order: 1, createdAt: 2, updatedAt: 999 }
+    ],
+    snippets: []
+  });
+  assert.deepEqual(normalized.groups.map((group) => group.id), ["first", "second"]);
+
+  const moved = model.reorderItems(normalized.groups, "second", "first", false);
+  assert.deepEqual(moved.map((group) => group.id), ["second", "first"]);
+  assert.deepEqual(moved.map((group) => group.order), [0, 1]);
+  assert.deepEqual(normalized.groups.map((group) => group.id), ["first", "second"]);
+
+  const movedToEnd = model.reorderItems(moved, "second", null, true);
+  assert.deepEqual(movedToEnd.map((group) => group.id), ["first", "second"]);
+  assert.equal(model.leadingOrder(movedToEnd), -1);
 });

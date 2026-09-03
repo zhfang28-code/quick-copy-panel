@@ -191,6 +191,7 @@
   let editingId = null;
   let editorLimits = { title: Model.MAX_GROUP_NAME_LENGTH, content: Model.MAX_GROUP_DESCRIPTION_LENGTH };
   let pendingDelete = null;
+  let dragState = null;
   let toastTimer = null;
 
   function readStoredState() {
@@ -274,7 +275,7 @@
       refs.resultCount.textContent = searchQuery
         ? `${visibleItems.length} / ${allItems.length} 条`
         : `${allItems.length} 条内容`;
-      refs.listHint.textContent = "单击卡片即可复制";
+      refs.listHint.textContent = searchQuery ? "清空搜索后可排序" : "拖动排序 · 单击复制";
 
       for (const snippet of visibleItems) {
         refs.list.appendChild(createSnippetCard(snippet));
@@ -292,7 +293,7 @@
       refs.resultCount.textContent = searchQuery
         ? `${visibleItems.length} / ${state.groups.length} 个`
         : `${state.groups.length} 个分类`;
-      refs.listHint.textContent = "点击分类进入";
+      refs.listHint.textContent = searchQuery ? "清空搜索后可排序" : "拖动排序 · 点击进入";
 
       for (const group of visibleItems) {
         refs.list.appendChild(createGroupCard(group));
@@ -404,6 +405,7 @@
       const actions = document.createElement("div");
       actions.className = "qcp-card-actions qcp-group-actions";
       actions.append(
+        createDragHandle("group", group.id, group.name),
         createActionButton("编辑分类", "edit-group", group.id, "group", "qcp-text-button"),
         createActionButton("删除", "request-delete", group.id, "group", "qcp-text-button qcp-delete-button")
       );
@@ -460,6 +462,7 @@
       const actions = document.createElement("div");
       actions.className = "qcp-card-actions";
       actions.append(
+        createDragHandle("snippet", snippet.id, snippet.title),
         createActionButton("编辑", "edit-snippet", snippet.id, "snippet", "qcp-text-button"),
         createActionButton("删除", "request-delete", snippet.id, "snippet", "qcp-text-button qcp-delete-button")
       );
@@ -477,6 +480,33 @@
     button.dataset.id = id;
     button.dataset.entity = entity;
     button.textContent = label;
+    return button;
+  }
+
+  function createDragHandle(type, id, label) {
+    const button = document.createElement("button");
+    const canDrag = searchQuery.length === 0;
+    button.className = "qcp-drag-handle";
+    button.type = "button";
+    button.draggable = canDrag;
+    button.dataset.dragHandle = "true";
+    button.dataset.dragType = type;
+    button.dataset.id = id;
+    button.setAttribute("aria-disabled", String(!canDrag));
+    button.setAttribute("aria-grabbed", "false");
+    button.setAttribute(
+      "aria-label",
+      canDrag
+        ? `拖动“${label}”调整位置，或按 Alt 加上下方向键移动`
+        : "清空搜索后可以调整位置"
+    );
+    button.title = canDrag ? "拖动排序 · Alt + ↑/↓" : "清空搜索后可排序";
+    button.innerHTML = `
+      <svg viewBox="0 0 18 18" aria-hidden="true">
+        <circle cx="6" cy="4" r="1.25"/><circle cx="12" cy="4" r="1.25"/>
+        <circle cx="6" cy="9" r="1.25"/><circle cx="12" cy="9" r="1.25"/>
+        <circle cx="6" cy="14" r="1.25"/><circle cx="12" cy="14" r="1.25"/>
+      </svg>`;
     return button;
   }
 
@@ -647,7 +677,10 @@
           state = { ...state, groups };
           message = "分类修改已保存";
         } else {
-          const group = Model.createGroup(values, { now });
+          const group = Model.createGroup(values, {
+            now,
+            order: Model.leadingOrder(state.groups)
+          });
           state = { ...state, groups: [group, ...state.groups] };
           activeGroupId = group.id;
           clearSearch(false);
@@ -670,7 +703,10 @@
           state = { ...state, snippets };
           message = "内容修改已保存";
         } else {
-          const snippet = Model.createSnippet(values, { now });
+          const snippet = Model.createSnippet(values, {
+            now,
+            order: Model.leadingOrder(snippetsForGroup(activeGroup.id))
+          });
           state = { ...state, snippets: [snippet, ...state.snippets] };
           message = "二级内容已保存";
         }
@@ -767,6 +803,92 @@
     }
   }
 
+  function orderedItemsFor(type) {
+    return type === "group"
+      ? Model.filterGroups(state.groups, state.snippets, "")
+      : Model.filterSnippets(snippetsForGroup(activeGroupId), "");
+  }
+
+  function applyReorder(type, sourceId, targetId, placeAfter, focusHandle) {
+    const items = orderedItemsFor(type);
+    const source = items.find((item) => item.id === sourceId);
+    if (!source || (targetId && !items.some((item) => item.id === targetId))) {
+      return;
+    }
+
+    const reordered = Model.reorderItems(items, sourceId, targetId, placeAfter);
+    if (type === "group") {
+      state = { ...state, groups: reordered };
+    } else {
+      const orderById = new Map(reordered.map((item) => [item.id, item.order]));
+      state = {
+        ...state,
+        snippets: state.snippets.map((snippet) => orderById.has(snippet.id)
+          ? { ...snippet, order: orderById.get(snippet.id) }
+          : snippet)
+      };
+    }
+
+    render();
+    void persistState();
+    showToast(`位置已更新：${source.name || source.title}`);
+
+    if (focusHandle) {
+      requestAnimationFrame(() => {
+        const handle = Array.from(shadow.querySelectorAll("[data-drag-handle]"))
+          .find((item) => item.dataset.id === sourceId && item.dataset.dragType === type);
+        handle && handle.focus();
+      });
+    }
+  }
+
+  function moveWithKeyboard(type, id, direction) {
+    if (searchQuery) {
+      showToast("请先清空搜索再调整位置", "error");
+      return;
+    }
+
+    const items = orderedItemsFor(type);
+    const sourceIndex = items.findIndex((item) => item.id === id);
+    const targetIndex = sourceIndex + direction;
+    if (sourceIndex === -1 || targetIndex < 0 || targetIndex >= items.length) {
+      showToast(direction < 0 ? "已经在最前面" : "已经在最后面");
+      return;
+    }
+
+    applyReorder(type, id, items[targetIndex].id, direction > 0, true);
+  }
+
+  function clearDropMarkers() {
+    for (const card of shadow.querySelectorAll(".qcp-drop-before, .qcp-drop-after")) {
+      card.classList.remove("qcp-drop-before", "qcp-drop-after");
+    }
+  }
+
+  function finishDrag() {
+    clearDropMarkers();
+    refs.list.classList.remove("is-dragging");
+    for (const card of shadow.querySelectorAll(".is-dragging")) {
+      card.classList.remove("is-dragging");
+    }
+    for (const handle of shadow.querySelectorAll('[aria-grabbed="true"]')) {
+      handle.setAttribute("aria-grabbed", "false");
+    }
+    dragState = null;
+  }
+
+  function dragCardFromTarget(target, type) {
+    if (!(target instanceof Element)) return null;
+    return target.closest(type === "group" ? ".qcp-group-card" : ".qcp-card");
+  }
+
+  function autoScrollList(pointerY) {
+    const bounds = refs.list.getBoundingClientRect();
+    const edgeSize = 42;
+    if (pointerY < bounds.top + edgeSize) refs.list.scrollTop -= 12;
+    else if (pointerY > bounds.bottom - edgeSize) refs.list.scrollTop += 12;
+  }
+
   async function copySnippet(id, trigger) {
     const snippet = state.snippets.find((item) => item.id === id);
     if (!snippet) {
@@ -848,6 +970,74 @@
     else if (action === "request-delete") { pendingDelete = { type: entity, id }; renderList(); }
     else if (action === "cancel-delete") { pendingDelete = null; renderList(); }
     else if (action === "confirm-delete") confirmDelete(entity, id);
+  });
+
+  shadow.addEventListener("dragstart", (event) => {
+    const handle = event.target instanceof Element
+      ? event.target.closest("[data-drag-handle]")
+      : null;
+    if (!handle || searchQuery || handle.getAttribute("aria-disabled") === "true") {
+      event.preventDefault();
+      return;
+    }
+
+    const type = handle.dataset.dragType;
+    const card = dragCardFromTarget(handle, type);
+    if (!card || !event.dataTransfer) {
+      event.preventDefault();
+      return;
+    }
+
+    dragState = { type, id: handle.dataset.id };
+    event.dataTransfer.effectAllowed = "move";
+    event.dataTransfer.setData("text/plain", handle.dataset.id);
+    handle.setAttribute("aria-grabbed", "true");
+    refs.list.classList.add("is-dragging");
+    requestAnimationFrame(() => card.classList.add("is-dragging"));
+  });
+
+  shadow.addEventListener("dragover", (event) => {
+    if (!dragState) return;
+    const targetCard = dragCardFromTarget(event.target, dragState.type);
+    if (!targetCard || targetCard.dataset.id === dragState.id) return;
+
+    event.preventDefault();
+    if (event.dataTransfer) event.dataTransfer.dropEffect = "move";
+    clearDropMarkers();
+    const bounds = targetCard.getBoundingClientRect();
+    targetCard.classList.add(event.clientY >= bounds.top + bounds.height / 2
+      ? "qcp-drop-after"
+      : "qcp-drop-before");
+    autoScrollList(event.clientY);
+  });
+
+  shadow.addEventListener("drop", (event) => {
+    if (!dragState) return;
+    const currentDrag = { ...dragState };
+    const targetCard = dragCardFromTarget(event.target, currentDrag.type);
+    if (!targetCard || targetCard.dataset.id === currentDrag.id) {
+      finishDrag();
+      return;
+    }
+
+    event.preventDefault();
+    const targetId = targetCard.dataset.id;
+    const placeAfter = targetCard.classList.contains("qcp-drop-after");
+    finishDrag();
+    applyReorder(currentDrag.type, currentDrag.id, targetId, placeAfter, false);
+  });
+
+  shadow.addEventListener("dragend", () => {
+    finishDrag();
+  });
+
+  shadow.addEventListener("keydown", (event) => {
+    const handle = event.target instanceof Element
+      ? event.target.closest("[data-drag-handle]")
+      : null;
+    if (!handle || !event.altKey || !["ArrowUp", "ArrowDown"].includes(event.key)) return;
+    event.preventDefault();
+    moveWithKeyboard(handle.dataset.dragType, handle.dataset.id, event.key === "ArrowUp" ? -1 : 1);
   });
 
   refs.search.addEventListener("input", () => {

@@ -727,6 +727,22 @@ textarea:focus-visible {
   transform: translateY(-1px);
 }
 
+.qcp-group-card.is-dragging,
+.qcp-card.is-dragging {
+  opacity: 0.42;
+  transform: scale(0.985);
+}
+
+.qcp-group-card.qcp-drop-before,
+.qcp-card.qcp-drop-before {
+  box-shadow: inset 0 3px 0 var(--qcp-accent), 0 10px 25px rgba(31, 35, 62, 0.08);
+}
+
+.qcp-group-card.qcp-drop-after,
+.qcp-card.qcp-drop-after {
+  box-shadow: inset 0 -3px 0 var(--qcp-accent), 0 10px 25px rgba(31, 35, 62, 0.08);
+}
+
 .qcp-group-open {
   display: flex;
   width: 100%;
@@ -940,10 +956,51 @@ textarea:focus-visible {
 
 .qcp-card-actions {
   display: flex;
+  min-height: 32px;
   align-items: center;
   justify-content: flex-end;
   gap: 2px;
   padding: 0 9px 8px;
+}
+
+.qcp-drag-handle {
+  display: grid;
+  width: 28px;
+  height: 25px;
+  padding: 0;
+  margin-right: auto;
+  place-items: center;
+  color: var(--qcp-text-faint);
+  cursor: grab;
+  background: transparent;
+  border: 0;
+  border-radius: 7px;
+  touch-action: none;
+}
+
+.qcp-drag-handle:hover {
+  color: var(--qcp-accent);
+  background: var(--qcp-accent-soft);
+}
+
+.qcp-drag-handle:active {
+  cursor: grabbing;
+}
+
+.qcp-drag-handle[aria-disabled="true"] {
+  opacity: 0.34;
+  cursor: not-allowed;
+}
+
+.qcp-drag-handle svg {
+  width: 18px;
+  height: 18px;
+  fill: currentColor;
+}
+
+.qcp-list.is-dragging {
+  cursor: grabbing;
+  user-select: none;
 }
 
 .qcp-text-button,
