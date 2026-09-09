@@ -1,6 +1,7 @@
 "use strict";
 
 const TOGGLE_MESSAGE = "QUICK_COPY_PANEL_TOGGLE";
+const ENABLED_KEY = "quickCopyPanelEnabled";
 
 function requestToggle(tabId) {
   if (!Number.isInteger(tabId)) {
@@ -14,8 +15,28 @@ function requestToggle(tabId) {
   });
 }
 
-chrome.action.onClicked.addListener((tab) => {
-  requestToggle(tab.id);
+function updateActionState(enabled) {
+  chrome.action.setBadgeBackgroundColor({ color: "#6857e8" });
+  chrome.action.setBadgeText({ text: enabled ? "" : "关" });
+  chrome.action.setTitle({
+    title: enabled ? "随手复制：已开启" : "随手复制：已关闭"
+  });
+}
+
+function readEnabledState() {
+  chrome.storage.local.get([ENABLED_KEY], (result) => {
+    if (chrome.runtime.lastError) return;
+    updateActionState(result[ENABLED_KEY] !== false);
+  });
+}
+
+chrome.runtime.onInstalled.addListener(readEnabledState);
+chrome.runtime.onStartup.addListener(readEnabledState);
+
+chrome.storage.onChanged.addListener((changes, areaName) => {
+  if (areaName === "local" && changes[ENABLED_KEY]) {
+    updateActionState(changes[ENABLED_KEY].newValue !== false);
+  }
 });
 
 chrome.commands.onCommand.addListener((command) => {
@@ -28,3 +49,5 @@ chrome.commands.onCommand.addListener((command) => {
     requestToggle(Array.isArray(tabs) && tabs[0] ? tabs[0].id : undefined);
   });
 });
+
+readEnabledState();

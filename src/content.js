@@ -4,7 +4,11 @@
   const Model = globalThis.QuickCopyModel;
   const HOST_ID = "quick-copy-panel-extension-host";
   const STORAGE_KEY = "quickCopyPanelState";
+  const ENABLED_KEY = "quickCopyPanelEnabled";
   const TOGGLE_MESSAGE = "QUICK_COPY_PANEL_TOGGLE";
+  const SET_ENABLED_MESSAGE = "QUICK_COPY_PANEL_SET_ENABLED";
+  const OPEN_MESSAGE = "QUICK_COPY_PANEL_OPEN";
+  const GET_STATUS_MESSAGE = "QUICK_COPY_PANEL_GET_STATUS";
 
   if (!Model || document.getElementById(HOST_ID)) {
     return;
@@ -19,6 +23,7 @@
   host.style.setProperty("width", "0", "important");
   host.style.setProperty("height", "0", "important");
   host.style.setProperty("z-index", "2147483647", "important");
+  host.style.setProperty("display", "none", "important");
 
   const shadow = host.attachShadow({ mode: "open" });
   const stylesheet = document.createElement("link");
@@ -185,6 +190,7 @@
   };
 
   let state = Model.createDefaultState();
+  let panelEnabled = false;
   let activeGroupId = null;
   let searchQuery = "";
   let editorType = null;
@@ -196,16 +202,17 @@
 
   function readStoredState() {
     return new Promise((resolve) => {
-      chrome.storage.local.get([STORAGE_KEY], (result) => {
+      chrome.storage.local.get([STORAGE_KEY, ENABLED_KEY], (result) => {
         const error = chrome.runtime.lastError;
         if (error) {
-          resolve({ state: Model.createDefaultState(), needsMigration: false });
+          resolve({ state: Model.createDefaultState(), enabled: true, needsMigration: false });
           return;
         }
 
         const stored = result[STORAGE_KEY];
         resolve({
           state: Model.normalizeState(stored),
+          enabled: result[ENABLED_KEY] !== false,
           needsMigration: Boolean(stored) && stored.version !== Model.SCHEMA_VERSION
         });
       });
@@ -224,6 +231,18 @@
       });
     }).catch(() => {
       showToast("保存失败，请稍后重试", "error");
+    });
+  }
+
+  function persistEnabled(enabled) {
+    return new Promise((resolve, reject) => {
+      chrome.storage.local.set({ [ENABLED_KEY]: enabled }, () => {
+        const error = chrome.runtime.lastError;
+        if (error) reject(new Error(error.message));
+        else resolve();
+      });
+    }).catch(() => {
+      if (panelEnabled) showToast("开关状态保存失败，请稍后重试", "error");
     });
   }
 
@@ -756,7 +775,31 @@
     requestAnimationFrame(() => refs.search.focus());
   }
 
+  function setPanelEnabled(enabled) {
+    panelEnabled = enabled !== false;
+    host.style.setProperty("display", panelEnabled ? "block" : "none", "important");
+    host.setAttribute("aria-hidden", String(!panelEnabled));
+    if (!panelEnabled) finishDrag();
+  }
+
+  function openPanel() {
+    const shouldSaveLayout = state.collapsed;
+    setPanelEnabled(true);
+    if (shouldSaveLayout) {
+      state = { ...state, collapsed: false };
+      render();
+      void persistState();
+    }
+    void persistEnabled(true);
+    requestAnimationFrame(() => refs.search.focus());
+  }
+
   function togglePanel() {
+    if (!panelEnabled) {
+      openPanel();
+      return;
+    }
+
     state = { ...state, collapsed: !state.collapsed };
     render();
     void persistState();
@@ -1071,12 +1114,36 @@
     }
   });
 
-  chrome.runtime.onMessage.addListener((message) => {
-    if (message && message.type === TOGGLE_MESSAGE) togglePanel();
+  chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
+    if (!message || typeof message !== "object") return;
+
+    if (message.type === TOGGLE_MESSAGE) {
+      togglePanel();
+    } else if (message.type === SET_ENABLED_MESSAGE) {
+      setPanelEnabled(message.enabled !== false);
+    } else if (message.type === OPEN_MESSAGE) {
+      openPanel();
+    } else if (message.type !== GET_STATUS_MESSAGE) {
+      return;
+    }
+
+    sendResponse({
+      ok: true,
+      enabled: panelEnabled,
+      collapsed: state.collapsed,
+      groups: state.groups.length,
+      snippets: state.snippets.length
+    });
   });
 
   chrome.storage.onChanged.addListener((changes, areaName) => {
-    if (areaName !== "local" || !changes[STORAGE_KEY]) return;
+    if (areaName !== "local") return;
+
+    if (changes[ENABLED_KEY]) {
+      setPanelEnabled(changes[ENABLED_KEY].newValue !== false);
+    }
+
+    if (!changes[STORAGE_KEY]) return;
     state = Model.normalizeState(changes[STORAGE_KEY].newValue);
     if (activeGroupId && !getActiveGroup()) activeGroupId = null;
     if (editingId) {
@@ -1089,6 +1156,7 @@
   readStoredState().then((stored) => {
     state = stored.state;
     render();
+    setPanelEnabled(stored.enabled);
     if (stored.needsMigration) void persistState();
   });
 })();

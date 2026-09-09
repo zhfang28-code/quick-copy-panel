@@ -23,8 +23,28 @@ if (manifest.version !== packageJson.version) {
   errors.push("manifest.json and package.json versions must match");
 }
 
+const popupFile = manifest.action && manifest.action.default_popup;
+const popupDependencies = [];
+
+if (popupFile) {
+  const popupPath = path.resolve(projectRoot, popupFile);
+  if (fs.existsSync(popupPath)) {
+    const popupMarkup = fs.readFileSync(popupPath, "utf8");
+    for (const match of popupMarkup.matchAll(/(?:src|href)="([^"]+)"/g)) {
+      const reference = match[1];
+      if (!/^(?:[a-z]+:|#)/i.test(reference)) {
+        popupDependencies.push(
+          path.posix.join(path.posix.dirname(popupFile), reference)
+        );
+      }
+    }
+  }
+}
+
 const declaredFiles = [
   manifest.background && manifest.background.service_worker,
+  popupFile,
+  ...popupDependencies,
   ...(manifest.content_scripts || []).flatMap((entry) => [
     ...(entry.js || []),
     ...(entry.css || [])
