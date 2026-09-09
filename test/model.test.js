@@ -196,3 +196,30 @@ test("version 3 normalization and reorderItems preserve custom card positions", 
   assert.deepEqual(movedToEnd.map((group) => group.id), ["first", "second"]);
   assert.equal(model.leadingOrder(movedToEnd), -1);
 });
+
+test("normalizePanelPosition keeps valid coordinates and rejects incomplete values", () => {
+  assert.deepEqual(model.normalizePanelPosition(null), {
+    version: 1,
+    expanded: null,
+    collapsedTop: null
+  });
+
+  assert.deepEqual(model.normalizePanelPosition({
+    version: 99,
+    expanded: { left: 128.7, top: 42.2 },
+    collapsedTop: 315.9
+  }), {
+    version: 1,
+    expanded: { left: 129, top: 42 },
+    collapsedTop: 316
+  });
+
+  assert.deepEqual(model.normalizePanelPosition({
+    expanded: { left: 80 },
+    collapsedTop: "200"
+  }), {
+    version: 1,
+    expanded: null,
+    collapsedTop: null
+  });
+});

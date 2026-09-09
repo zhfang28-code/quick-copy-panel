@@ -5,6 +5,7 @@
   const HOST_ID = "quick-copy-panel-extension-host";
   const STORAGE_KEY = "quickCopyPanelState";
   const ENABLED_KEY = "quickCopyPanelEnabled";
+  const POSITION_KEY = "quickCopyPanelPosition";
   const TOGGLE_MESSAGE = "QUICK_COPY_PANEL_TOGGLE";
   const SET_ENABLED_MESSAGE = "QUICK_COPY_PANEL_SET_ENABLED";
   const OPEN_MESSAGE = "QUICK_COPY_PANEL_OPEN";
@@ -34,7 +35,10 @@
   const app = document.createElement("div");
   app.innerHTML = `
     <div class="qcp-shell" data-collapsed="false" data-level="groups">
-      <button class="qcp-collapsed-trigger" type="button" data-action="toggle" aria-label="展开随手复制面板">
+      <button class="qcp-collapsed-trigger" type="button" data-action="toggle" data-window-drag-zone="collapsed" aria-label="展开随手复制面板；拖动可调整上下位置" title="单击展开，拖动调整位置">
+        <span class="qcp-collapsed-grip" aria-hidden="true">
+          <svg viewBox="0 0 18 8"><circle cx="4" cy="2" r="1"/><circle cx="9" cy="2" r="1"/><circle cx="14" cy="2" r="1"/><circle cx="4" cy="6" r="1"/><circle cx="9" cy="6" r="1"/><circle cx="14" cy="6" r="1"/></svg>
+        </span>
         <span class="qcp-collapsed-icon" aria-hidden="true">
           <svg viewBox="0 0 24 24"><path d="M8 5.75A2.75 2.75 0 0 1 10.75 3h7.5A2.75 2.75 0 0 1 21 5.75v7.5A2.75 2.75 0 0 1 18.25 16H17v1.25A3.75 3.75 0 0 1 13.25 21h-7.5A3.75 3.75 0 0 1 2 17.25v-7.5A3.75 3.75 0 0 1 5.75 6H7v-.25Zm1 2.5v5A1.75 1.75 0 0 0 10.75 15h2.5A1.75 1.75 0 0 0 15 13.25v-5a.25.25 0 0 0-.25-.25h-5.5a.25.25 0 0 0-.25.25Z"/></svg>
         </span>
@@ -43,7 +47,7 @@
       </button>
 
       <section class="qcp-panel" data-ref="panel" aria-label="随手复制面板">
-        <header class="qcp-header">
+        <header class="qcp-header" data-window-drag-zone="expanded" title="拖动标题栏可移动面板">
           <div class="qcp-brand-mark" aria-hidden="true">
             <svg viewBox="0 0 24 24"><path d="M8 5.75A2.75 2.75 0 0 1 10.75 3h7.5A2.75 2.75 0 0 1 21 5.75v7.5A2.75 2.75 0 0 1 18.25 16H17v1.25A3.75 3.75 0 0 1 13.25 21h-7.5A3.75 3.75 0 0 1 2 17.25v-7.5A3.75 3.75 0 0 1 5.75 6H7v-.25Zm1 2.5v5A1.75 1.75 0 0 0 10.75 15h2.5A1.75 1.75 0 0 0 15 13.25v-5a.25.25 0 0 0-.25-.25h-5.5a.25.25 0 0 0-.25.25Z"/></svg>
           </div>
@@ -51,6 +55,9 @@
             <h1>随手复制</h1>
             <p>分级整理，一点即用</p>
           </div>
+          <span class="qcp-window-drag-handle" data-window-drag-handle="expanded" role="button" tabindex="0" aria-label="拖动面板；按 Alt 加方向键可微调位置" title="拖动面板">
+            <svg viewBox="0 0 18 14" aria-hidden="true"><circle cx="5" cy="3" r="1.25"/><circle cx="13" cy="3" r="1.25"/><circle cx="5" cy="7" r="1.25"/><circle cx="13" cy="7" r="1.25"/><circle cx="5" cy="11" r="1.25"/><circle cx="13" cy="11" r="1.25"/></svg>
+          </span>
           <button class="qcp-icon-button qcp-collapse-button" type="button" data-action="toggle" aria-label="收起面板" title="收起面板">
             <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m9 6 6 6-6 6"/></svg>
           </button>
@@ -191,6 +198,7 @@
 
   let state = Model.createDefaultState();
   let panelEnabled = false;
+  let panelPosition = Model.normalizePanelPosition(null);
   let activeGroupId = null;
   let searchQuery = "";
   let editorType = null;
@@ -198,14 +206,22 @@
   let editorLimits = { title: Model.MAX_GROUP_NAME_LENGTH, content: Model.MAX_GROUP_DESCRIPTION_LENGTH };
   let pendingDelete = null;
   let dragState = null;
+  let windowDragState = null;
+  let suppressCollapsedToggle = false;
+  let positionFrame = null;
   let toastTimer = null;
 
   function readStoredState() {
     return new Promise((resolve) => {
-      chrome.storage.local.get([STORAGE_KEY, ENABLED_KEY], (result) => {
+      chrome.storage.local.get([STORAGE_KEY, ENABLED_KEY, POSITION_KEY], (result) => {
         const error = chrome.runtime.lastError;
         if (error) {
-          resolve({ state: Model.createDefaultState(), enabled: true, needsMigration: false });
+          resolve({
+            state: Model.createDefaultState(),
+            enabled: true,
+            position: Model.normalizePanelPosition(null),
+            needsMigration: false
+          });
           return;
         }
 
@@ -213,6 +229,7 @@
         resolve({
           state: Model.normalizeState(stored),
           enabled: result[ENABLED_KEY] !== false,
+          position: Model.normalizePanelPosition(result[POSITION_KEY]),
           needsMigration: Boolean(stored) && stored.version !== Model.SCHEMA_VERSION
         });
       });
@@ -243,6 +260,20 @@
       });
     }).catch(() => {
       if (panelEnabled) showToast("开关状态保存失败，请稍后重试", "error");
+    });
+  }
+
+  function persistPanelPosition() {
+    return new Promise((resolve, reject) => {
+      chrome.storage.local.set({ [POSITION_KEY]: panelPosition }, () => {
+        const error = chrome.runtime.lastError;
+        if (error) reject(new Error(error.message));
+        else resolve();
+      });
+    }).catch(() => {
+      if (panelEnabled && !state.collapsed) {
+        showToast("窗口位置保存失败，请稍后重试", "error");
+      }
     });
   }
 
@@ -281,6 +312,7 @@
     }
 
     renderList();
+    schedulePanelPosition();
   }
 
   function renderList() {
@@ -775,11 +807,219 @@
     requestAnimationFrame(() => refs.search.focus());
   }
 
+  function currentPanelMode() {
+    return state.collapsed ? "collapsed" : "expanded";
+  }
+
+  function panelElementForMode(mode) {
+    return mode === "collapsed"
+      ? shadow.querySelector(".qcp-collapsed-trigger")
+      : refs.panel;
+  }
+
+  function clampValue(value, minimum, maximum) {
+    return Math.min(Math.max(value, minimum), Math.max(minimum, maximum));
+  }
+
+  function clampPanelCoordinates(mode, left, top) {
+    const element = panelElementForMode(mode);
+    const bounds = element ? element.getBoundingClientRect() : { width: 0, height: 0 };
+    const width = element ? element.offsetWidth || bounds.width : bounds.width;
+    const height = element ? element.offsetHeight || bounds.height : bounds.height;
+    const margin = mode === "collapsed" ? 6 : 8;
+    const maxTop = window.innerHeight - height - margin;
+
+    if (mode === "collapsed") {
+      return {
+        left,
+        top: clampValue(top, margin, maxTop)
+      };
+    }
+
+    const maxLeft = window.innerWidth - width - margin;
+    return {
+      left: clampValue(left, margin, maxLeft),
+      top: clampValue(top, margin, maxTop)
+    };
+  }
+
+  function clearPanelPositionStyles() {
+    refs.shell.style.removeProperty("left");
+    refs.shell.style.removeProperty("right");
+    refs.shell.style.removeProperty("top");
+    refs.shell.style.removeProperty("transform");
+  }
+
+  function setPanelCoordinates(mode, coordinates) {
+    refs.shell.style.setProperty("top", `${Math.round(coordinates.top)}px`);
+    refs.shell.style.setProperty("transform", "none");
+
+    if (mode === "expanded") {
+      refs.shell.style.setProperty("left", `${Math.round(coordinates.left)}px`);
+      refs.shell.style.setProperty("right", "auto");
+    } else {
+      refs.shell.style.removeProperty("left");
+      refs.shell.style.removeProperty("right");
+    }
+  }
+
+  function applySavedPanelPosition() {
+    positionFrame = null;
+    if (windowDragState) return;
+
+    const mode = currentPanelMode();
+    const saved = mode === "expanded"
+      ? panelPosition.expanded
+      : panelPosition.collapsedTop === null
+        ? null
+        : { left: 0, top: panelPosition.collapsedTop };
+
+    if (!saved) {
+      clearPanelPositionStyles();
+      return;
+    }
+
+    setPanelCoordinates(
+      mode,
+      clampPanelCoordinates(mode, saved.left, saved.top)
+    );
+  }
+
+  function schedulePanelPosition() {
+    if (positionFrame !== null) cancelAnimationFrame(positionFrame);
+    positionFrame = requestAnimationFrame(applySavedPanelPosition);
+  }
+
+  function beginWindowDrag(event) {
+    if (!panelEnabled || event.isPrimary === false) return;
+    if (event.pointerType === "mouse" && event.button !== 0) return;
+
+    const target = event.target instanceof Element ? event.target : null;
+    const zone = target ? target.closest("[data-window-drag-zone]") : null;
+    if (!zone) return;
+
+    const mode = zone.dataset.windowDragZone;
+    if (mode !== currentPanelMode()) return;
+    if (mode === "expanded" && target.closest("button, input, textarea, select, a")) return;
+
+    const element = panelElementForMode(mode);
+    if (!element) return;
+    const bounds = refs.shell.getBoundingClientRect();
+
+    windowDragState = {
+      mode,
+      pointerId: event.pointerId,
+      zone,
+      startX: event.clientX,
+      startY: event.clientY,
+      originLeft: bounds.left,
+      originTop: bounds.top,
+      current: { left: bounds.left, top: bounds.top },
+      moved: false
+    };
+
+    if (typeof zone.setPointerCapture === "function") {
+      zone.setPointerCapture(event.pointerId);
+    }
+  }
+
+  function updateWindowDrag(event) {
+    if (!windowDragState || event.pointerId !== windowDragState.pointerId) return;
+
+    const deltaX = event.clientX - windowDragState.startX;
+    const deltaY = event.clientY - windowDragState.startY;
+    if (!windowDragState.moved && Math.hypot(deltaX, deltaY) < 5) return;
+
+    windowDragState.moved = true;
+    refs.shell.classList.add("is-window-dragging");
+    event.preventDefault();
+
+    const coordinates = clampPanelCoordinates(
+      windowDragState.mode,
+      windowDragState.originLeft + (windowDragState.mode === "expanded" ? deltaX : 0),
+      windowDragState.originTop + deltaY
+    );
+    windowDragState.current = coordinates;
+    setPanelCoordinates(windowDragState.mode, coordinates);
+  }
+
+  function finishWindowDrag(event) {
+    if (!windowDragState || event.pointerId !== windowDragState.pointerId) return;
+    const completedDrag = windowDragState;
+    windowDragState = null;
+    refs.shell.classList.remove("is-window-dragging");
+
+    if (typeof completedDrag.zone.hasPointerCapture === "function"
+      && completedDrag.zone.hasPointerCapture(completedDrag.pointerId)) {
+      completedDrag.zone.releasePointerCapture(completedDrag.pointerId);
+    }
+
+    if (!completedDrag.moved) return;
+
+    if (completedDrag.mode === "expanded") {
+      panelPosition = Model.normalizePanelPosition({
+        ...panelPosition,
+        expanded: completedDrag.current
+      });
+      showToast("窗口位置已保存");
+    } else {
+      panelPosition = Model.normalizePanelPosition({
+        ...panelPosition,
+        collapsedTop: completedDrag.current.top
+      });
+      if (event.type === "pointerup") {
+        suppressCollapsedToggle = true;
+        window.setTimeout(() => { suppressCollapsedToggle = false; }, 0);
+      }
+    }
+
+    void persistPanelPosition();
+  }
+
+  function cancelWindowDrag() {
+    if (!windowDragState) return;
+    const activeDrag = windowDragState;
+    windowDragState = null;
+    refs.shell.classList.remove("is-window-dragging");
+    if (typeof activeDrag.zone.hasPointerCapture === "function"
+      && activeDrag.zone.hasPointerCapture(activeDrag.pointerId)) {
+      activeDrag.zone.releasePointerCapture(activeDrag.pointerId);
+    }
+  }
+
+  function movePanelWithKeyboard(mode, key, step) {
+    if (mode !== currentPanelMode()) return false;
+    if (mode === "collapsed" && !["ArrowUp", "ArrowDown"].includes(key)) return false;
+
+    const element = panelElementForMode(mode);
+    if (!element) return false;
+    const bounds = refs.shell.getBoundingClientRect();
+    const horizontal = key === "ArrowLeft" ? -step : key === "ArrowRight" ? step : 0;
+    const vertical = key === "ArrowUp" ? -step : key === "ArrowDown" ? step : 0;
+    const coordinates = clampPanelCoordinates(
+      mode,
+      bounds.left + horizontal,
+      bounds.top + vertical
+    );
+
+    setPanelCoordinates(mode, coordinates);
+    panelPosition = Model.normalizePanelPosition(mode === "expanded"
+      ? { ...panelPosition, expanded: coordinates }
+      : { ...panelPosition, collapsedTop: coordinates.top });
+    void persistPanelPosition();
+    if (mode === "expanded") showToast("窗口位置已保存");
+    return true;
+  }
+
   function setPanelEnabled(enabled) {
     panelEnabled = enabled !== false;
     host.style.setProperty("display", panelEnabled ? "block" : "none", "important");
     host.setAttribute("aria-hidden", String(!panelEnabled));
-    if (!panelEnabled) finishDrag();
+    if (!panelEnabled) {
+      finishDrag();
+      cancelWindowDrag();
+    }
+    if (panelEnabled) schedulePanelPosition();
   }
 
   function openPanel() {
@@ -985,6 +1225,11 @@
     toastTimer = window.setTimeout(() => refs.toast.classList.remove("is-visible"), 2200);
   }
 
+  shadow.addEventListener("pointerdown", beginWindowDrag);
+  shadow.addEventListener("pointermove", updateWindowDrag);
+  shadow.addEventListener("pointerup", finishWindowDrag);
+  shadow.addEventListener("pointercancel", finishWindowDrag);
+
   shadow.addEventListener("click", (event) => {
     const target = event.target instanceof Element ? event.target.closest("[data-action]") : null;
     if (!target) return;
@@ -992,6 +1237,14 @@
     const action = target.dataset.action;
     const id = target.dataset.id;
     const entity = target.dataset.entity;
+
+    if (action === "toggle"
+      && target.classList.contains("qcp-collapsed-trigger")
+      && suppressCollapsedToggle) {
+      suppressCollapsedToggle = false;
+      event.preventDefault();
+      return;
+    }
 
     if (action === "toggle") togglePanel();
     else if (action === "add") getActiveGroup() ? openSnippetEditor(null) : openGroupEditor(null);
@@ -1075,6 +1328,17 @@
   });
 
   shadow.addEventListener("keydown", (event) => {
+    const windowHandle = event.target instanceof Element
+      ? event.target.closest("[data-window-drag-handle], [data-window-drag-zone=\"collapsed\"]")
+      : null;
+    if (windowHandle && event.altKey && ["ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight"].includes(event.key)) {
+      const mode = windowHandle.dataset.windowDragHandle || windowHandle.dataset.windowDragZone;
+      if (movePanelWithKeyboard(mode, event.key, event.shiftKey ? 32 : 12)) {
+        event.preventDefault();
+        return;
+      }
+    }
+
     const handle = event.target instanceof Element
       ? event.target.closest("[data-drag-handle]")
       : null;
@@ -1114,6 +1378,8 @@
     }
   });
 
+  window.addEventListener("resize", schedulePanelPosition);
+
   chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
     if (!message || typeof message !== "object") return;
 
@@ -1143,6 +1409,11 @@
       setPanelEnabled(changes[ENABLED_KEY].newValue !== false);
     }
 
+    if (changes[POSITION_KEY]) {
+      panelPosition = Model.normalizePanelPosition(changes[POSITION_KEY].newValue);
+      schedulePanelPosition();
+    }
+
     if (!changes[STORAGE_KEY]) return;
     state = Model.normalizeState(changes[STORAGE_KEY].newValue);
     if (activeGroupId && !getActiveGroup()) activeGroupId = null;
@@ -1155,6 +1426,7 @@
 
   readStoredState().then((stored) => {
     state = stored.state;
+    panelPosition = stored.position;
     render();
     setPanelEnabled(stored.enabled);
     if (stored.needsMigration) void persistState();

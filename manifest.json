@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
   "name": "随手复制",
-  "version": "1.3.0",
-  "description": "通过中文控制弹窗启停网页右侧面板，分级管理、拖动排序并单击复制常用文本。",
+  "version": "1.4.0",
+  "description": "通过中文弹窗启停可自由移动的网页悬浮面板，分级管理、拖动排序并单击复制常用文本。",
   "minimum_chrome_version": "102",
   "permissions": [
     "storage"

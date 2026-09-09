@@ -19,6 +19,7 @@
   const MAX_TITLE_LENGTH = 80;
   const MAX_CONTENT_LENGTH = 10000;
   const UNCATEGORIZED_GROUP_ID = "group-uncategorized";
+  const POSITION_VERSION = 1;
 
   function createDefaultState() {
     return {
@@ -54,6 +55,14 @@
     return Number.isFinite(value) ? value : fallback;
   }
 
+  function cleanCoordinate(value) {
+    if (!Number.isFinite(value)) {
+      return null;
+    }
+
+    return Math.round(Math.max(-100000, Math.min(100000, value)));
+  }
+
   function cleanId(value) {
     return typeof value === "string" ? value.trim().slice(0, 128) : "";
   }
@@ -69,6 +78,30 @@
 
     usedIds.add(id);
     return id;
+  }
+
+  function normalizePanelPosition(candidate) {
+    if (!candidate || typeof candidate !== "object" || Array.isArray(candidate)) {
+      return {
+        version: POSITION_VERSION,
+        expanded: null,
+        collapsedTop: null
+      };
+    }
+
+    const rawExpanded = candidate.expanded;
+    const left = rawExpanded && typeof rawExpanded === "object"
+      ? cleanCoordinate(rawExpanded.left)
+      : null;
+    const top = rawExpanded && typeof rawExpanded === "object"
+      ? cleanCoordinate(rawExpanded.top)
+      : null;
+
+    return {
+      version: POSITION_VERSION,
+      expanded: left === null || top === null ? null : { left, top },
+      collapsedTop: cleanCoordinate(candidate.collapsedTop)
+    };
   }
 
   function normalizeState(candidate) {
@@ -401,7 +434,9 @@
     MAX_TITLE_LENGTH,
     MAX_CONTENT_LENGTH,
     UNCATEGORIZED_GROUP_ID,
+    POSITION_VERSION,
     createDefaultState,
+    normalizePanelPosition,
     normalizeState,
     createGroup,
     updateGroup,

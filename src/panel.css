@@ -38,7 +38,8 @@ button {
 
 button:focus-visible,
 input:focus-visible,
-textarea:focus-visible {
+textarea:focus-visible,
+.qcp-window-drag-handle:focus-visible {
   outline: 3px solid rgba(103, 88, 232, 0.25);
   outline-offset: 2px;
 }
@@ -105,17 +106,33 @@ textarea:focus-visible {
   gap: 9px;
   padding: 12px 8px 10px;
   color: #ffffff;
-  cursor: pointer;
+  cursor: grab;
   background: linear-gradient(155deg, #7568ef 0%, #5646d6 92%);
   border: 1px solid rgba(255, 255, 255, 0.28);
   border-radius: 18px 0 0 18px;
   box-shadow: 0 12px 35px rgba(75, 62, 190, 0.34);
   animation: qcp-tab-in 180ms ease-out both;
+  touch-action: none;
 }
 
 .qcp-collapsed-trigger:hover {
   background: linear-gradient(155deg, #8175f3 0%, #5d4cdc 92%);
   transform: translateX(-2px);
+}
+
+.qcp-collapsed-grip {
+  display: grid;
+  width: 22px;
+  height: 10px;
+  place-items: center;
+  color: rgba(255, 255, 255, 0.72);
+  cursor: grab;
+}
+
+.qcp-collapsed-grip svg {
+  width: 18px;
+  height: 8px;
+  fill: currentColor;
 }
 
 .qcp-collapsed-icon {
@@ -167,6 +184,9 @@ textarea:focus-visible {
   background:
     radial-gradient(circle at 88% -30%, rgba(255, 255, 255, 0.28), transparent 46%),
     linear-gradient(132deg, #6c5de9 0%, #5141c9 100%);
+  cursor: grab;
+  touch-action: none;
+  user-select: none;
 }
 
 .qcp-header::after {
@@ -228,6 +248,51 @@ textarea:focus-visible {
   margin-top: 2px;
   color: rgba(255, 255, 255, 0.72);
   font-size: 12px;
+}
+
+.qcp-window-drag-handle {
+  position: relative;
+  z-index: 2;
+  display: grid;
+  width: 26px;
+  height: 34px;
+  flex: 0 0 auto;
+  place-items: center;
+  color: rgba(255, 255, 255, 0.68);
+  cursor: grab;
+  border-radius: 9px;
+  transition: color 140ms ease, background 140ms ease;
+}
+
+.qcp-window-drag-handle:hover {
+  color: #ffffff;
+  background: rgba(255, 255, 255, 0.12);
+}
+
+.qcp-window-drag-handle svg {
+  width: 18px;
+  height: 14px;
+  fill: currentColor;
+}
+
+.qcp-shell.is-window-dragging {
+  user-select: none;
+}
+
+.qcp-shell.is-window-dragging .qcp-header,
+.qcp-shell.is-window-dragging .qcp-window-drag-handle,
+.qcp-shell.is-window-dragging .qcp-collapsed-trigger,
+.qcp-shell.is-window-dragging .qcp-collapsed-grip {
+  cursor: grabbing;
+}
+
+.qcp-shell.is-window-dragging .qcp-panel {
+  box-shadow: 0 28px 78px rgba(31, 35, 62, 0.24), 0 6px 20px rgba(31, 35, 62, 0.12);
+}
+
+.qcp-header button {
+  cursor: pointer;
+  touch-action: manipulation;
 }
 
 .qcp-icon-button {
