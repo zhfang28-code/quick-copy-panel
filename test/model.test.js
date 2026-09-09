@@ -4,10 +4,19 @@ const test = require("node:test");
 const assert = require("node:assert/strict");
 const model = require("../src/model.js");
 
-test("createDefaultState returns an empty version 3 hierarchy", () => {
+test("createDefaultState returns a version 4 hierarchy with one default template", () => {
   assert.deepEqual(model.createDefaultState(), {
-    version: 3,
+    version: 4,
     collapsed: false,
+    selectedTemplateId: "template-default",
+    templates: [{
+      id: "template-default",
+      name: "默认模板",
+      description: "",
+      order: 0,
+      createdAt: 1,
+      updatedAt: 1
+    }],
     groups: [],
     snippets: []
   });
@@ -35,11 +44,15 @@ test("normalizeState migrates version 1 flat snippets into 未分类", () => {
     ]
   });
 
-  assert.equal(migrated.version, 3);
+  assert.equal(migrated.version, 4);
   assert.equal(migrated.collapsed, true);
+  assert.equal(migrated.templates.length, 1);
+  assert.equal(migrated.templates[0].name, "默认模板");
+  assert.equal(migrated.selectedTemplateId, migrated.templates[0].id);
   assert.equal(migrated.groups.length, 1);
   assert.equal(migrated.groups[0].name, "未分类");
   assert.equal(migrated.groups[0].description, "从旧版本自动迁移的内容");
+  assert.equal(migrated.groups[0].templateId, migrated.templates[0].id);
   assert.equal(migrated.snippets.length, 2);
   assert.ok(migrated.snippets.every((snippet) => snippet.groupId === migrated.groups[0].id));
   assert.deepEqual(migrated.snippets.map((snippet) => snippet.title), ["奖项", "邮箱"]);
@@ -77,19 +90,21 @@ test("normalizeState keeps valid hierarchy and rescues orphaned snippets", () =>
 
 test("createGroup and updateGroup validate and normalize values", () => {
   const group = model.createGroup(
-    { name: "  获奖   经历  ", description: " 竞赛 相关 内容 " },
+    { templateId: "template-1", name: "  获奖   经历  ", description: " 竞赛 相关 内容 " },
     { id: "group-fixed", now: 1234 }
   );
 
   assert.deepEqual(group, {
     id: "group-fixed",
+    templateId: "template-1",
     name: "获奖 经历",
     description: "竞赛 相关 内容",
     order: 0,
     createdAt: 1234,
     updatedAt: 1234
   });
-  assert.throws(() => model.createGroup({ name: "  " }), /不能为空/);
+  assert.throws(() => model.createGroup({ templateId: "template-1", name: "  " }), /不能为空/);
+  assert.throws(() => model.createGroup({ name: "分类" }), /选择一个模板/);
 
   const updated = model.updateGroup(group, { name: "奖项", description: "" }, 2000);
   assert.equal(updated.id, group.id);
@@ -186,6 +201,7 @@ test("version 3 normalization and reorderItems preserve custom card positions", 
     snippets: []
   });
   assert.deepEqual(normalized.groups.map((group) => group.id), ["first", "second"]);
+  assert.ok(normalized.groups.every((group) => group.templateId === model.DEFAULT_TEMPLATE_ID));
 
   const moved = model.reorderItems(normalized.groups, "second", "first", false);
   assert.deepEqual(moved.map((group) => group.id), ["second", "first"]);
@@ -195,6 +211,100 @@ test("version 3 normalization and reorderItems preserve custom card positions", 
   const movedToEnd = model.reorderItems(moved, "second", null, true);
   assert.deepEqual(movedToEnd.map((group) => group.id), ["first", "second"]);
   assert.equal(model.leadingOrder(movedToEnd), -1);
+});
+
+test("version 4 keeps groups separated and ordered inside their templates", () => {
+  const normalized = model.normalizeState({
+    version: 4,
+    selectedTemplateId: "template-b",
+    templates: [
+      { id: "template-a", name: "模板 A", order: 0, createdAt: 1, updatedAt: 1 },
+      { id: "template-b", name: "模板 B", order: 1, createdAt: 2, updatedAt: 2 }
+    ],
+    groups: [
+      { id: "a-2", templateId: "template-a", name: "A2", order: 1, createdAt: 1, updatedAt: 1 },
+      { id: "b-1", templateId: "template-b", name: "B1", order: 0, createdAt: 1, updatedAt: 1 },
+      { id: "a-1", templateId: "template-a", name: "A1", order: 0, createdAt: 1, updatedAt: 1 },
+      { id: "orphan", templateId: "missing", name: "待归档", order: 3, createdAt: 1, updatedAt: 1 }
+    ],
+    snippets: []
+  });
+
+  assert.equal(normalized.selectedTemplateId, "template-b");
+  assert.deepEqual(normalized.groups.map((group) => group.id), ["a-1", "a-2", "orphan", "b-1"]);
+  assert.equal(normalized.groups.find((group) => group.id === "orphan").templateId, "template-a");
+});
+
+test("createTemplate and updateTemplate normalize names and preserve identity", () => {
+  const template = model.createTemplate(
+    { name: "  求职   模板 ", description: " 简历 和 自荐信 " },
+    { id: "template-job", now: 100 }
+  );
+  assert.deepEqual(template, {
+    id: "template-job",
+    name: "求职 模板",
+    description: "简历 和 自荐信",
+    order: 0,
+    createdAt: 100,
+    updatedAt: 100
+  });
+  assert.throws(() => model.createTemplate({ name: "  " }), /不能为空/);
+
+  const updated = model.updateTemplate(template, { name: "科研申请", description: "" }, 200);
+  assert.equal(updated.id, "template-job");
+  assert.equal(updated.createdAt, 100);
+  assert.equal(updated.name, "科研申请");
+  assert.equal(updated.updatedAt, 200);
+});
+
+test("group clipboard copies descendants and instantiates independent records", () => {
+  const sourceGroup = {
+    id: "source-group",
+    templateId: "source-template",
+    name: "获奖经历",
+    description: "竞赛记录",
+    order: 0,
+    createdAt: 1,
+    updatedAt: 2
+  };
+  const clipboard = model.createGroupClipboard(sourceGroup, [
+    { id: "skip", groupId: "other", title: "其他", content: "不复制", order: 0 },
+    { id: "second", groupId: "source-group", title: "二等奖", content: "第二条\n正文", order: 1 },
+    { id: "first", groupId: "source-group", title: "一等奖", content: "  第一条正文  ", order: 0 }
+  ], { now: 300 });
+
+  assert.equal(clipboard.sourceTemplateId, "source-template");
+  assert.deepEqual(clipboard.snippets.map((snippet) => snippet.title), ["一等奖", "二等奖"]);
+  assert.equal(clipboard.snippets[0].content, "  第一条正文  ");
+
+  const pasted = model.instantiateGroupClipboard(
+    clipboard,
+    "target-template",
+    [{ name: "获奖经历" }, { name: "获奖经历（副本）" }],
+    {
+      groupId: "new-group",
+      snippetIds: ["new-first", "new-second"],
+      now: 400,
+      order: -1
+    }
+  );
+
+  assert.equal(pasted.group.id, "new-group");
+  assert.equal(pasted.group.templateId, "target-template");
+  assert.equal(pasted.group.name, "获奖经历（副本 2）");
+  assert.deepEqual(pasted.snippets.map((snippet) => snippet.id), ["new-first", "new-second"]);
+  assert.ok(pasted.snippets.every((snippet) => snippet.groupId === "new-group"));
+  assert.equal(pasted.snippets[0].content, "  第一条正文  ");
+  assert.notEqual(pasted.group.id, sourceGroup.id);
+});
+
+test("normalizeGroupClipboard rejects malformed buffers", () => {
+  assert.equal(model.normalizeGroupClipboard(null), null);
+  assert.equal(model.normalizeGroupClipboard({ sourceTemplateId: "t", group: { name: "" } }), null);
+  assert.throws(
+    () => model.instantiateGroupClipboard(null, "target", []),
+    /数据无效/
+  );
 });
 
 test("normalizePanelPosition keeps valid coordinates and rejects incomplete values", () => {

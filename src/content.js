@@ -6,6 +6,7 @@
   const STORAGE_KEY = "quickCopyPanelState";
   const ENABLED_KEY = "quickCopyPanelEnabled";
   const POSITION_KEY = "quickCopyPanelPosition";
+  const GROUP_CLIPBOARD_KEY = "quickCopyPanelGroupClipboard";
   const TOGGLE_MESSAGE = "QUICK_COPY_PANEL_TOGGLE";
   const SET_ENABLED_MESSAGE = "QUICK_COPY_PANEL_SET_ENABLED";
   const OPEN_MESSAGE = "QUICK_COPY_PANEL_OPEN";
@@ -64,6 +65,36 @@
         </header>
 
         <div class="qcp-main">
+          <section class="qcp-template-toolbar" aria-label="模板选择与管理">
+            <label class="qcp-template-picker">
+              <span class="qcp-template-label">当前模板</span>
+              <span class="qcp-template-select-wrap">
+                <select data-ref="template-select" aria-label="选择模板"></select>
+                <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m8 10 4 4 4-4"/></svg>
+              </span>
+            </label>
+            <button class="qcp-template-icon-button" type="button" data-action="add-template" aria-label="新建模板" title="新建模板">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>
+            </button>
+            <button class="qcp-template-icon-button" type="button" data-action="edit-template" aria-label="编辑当前模板" title="编辑当前模板">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m4 20 4.2-1 10.1-10.1a2.1 2.1 0 0 0-3-3L5.2 16 4 20Z"/><path d="m13.8 7.3 3 3"/></svg>
+            </button>
+          </section>
+
+          <section class="qcp-transfer-banner" data-ref="transfer-banner" aria-label="整组复制暂存区" hidden>
+            <span class="qcp-transfer-icon" aria-hidden="true">
+              <svg viewBox="0 0 24 24"><rect x="8" y="8" width="11" height="11" rx="2"/><path d="M16 8V6a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h2"/></svg>
+            </span>
+            <span class="qcp-transfer-copy">
+              <strong data-ref="transfer-title">已复制分类</strong>
+              <small data-ref="transfer-description">切换模板后即可粘贴</small>
+            </span>
+            <button class="qcp-transfer-paste" data-ref="transfer-paste" type="button" data-action="paste-group">粘贴整组</button>
+            <button class="qcp-transfer-clear" type="button" data-action="clear-group-copy" aria-label="清除已复制分类" title="清除">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m7 7 10 10M17 7 7 17"/></svg>
+            </button>
+          </section>
+
           <div class="qcp-toolbar">
             <label class="qcp-search">
               <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m20 20-4.2-4.2m1.2-5.3a6.5 6.5 0 1 1-13 0 6.5 6.5 0 0 1 13 0Z"/></svg>
@@ -117,8 +148,17 @@
               <span class="qcp-character-count" data-ref="content-count">0 / 120</span>
             </label>
 
+            <div class="qcp-template-delete-confirmation" data-ref="template-delete-confirmation" hidden>
+              <span data-ref="template-delete-message">确定删除当前模板？</span>
+              <button class="qcp-text-button" type="button" data-action="cancel-template-delete">取消</button>
+              <button class="qcp-danger-button" type="button" data-action="confirm-template-delete">确认删除</button>
+            </div>
+
             <div class="qcp-editor-actions">
-              <span class="qcp-save-hint"><kbd>Ctrl</kbd> + <kbd>Enter</kbd> 保存</span>
+              <div class="qcp-editor-meta-actions">
+                <button class="qcp-editor-delete-template" data-ref="delete-template-button" type="button" data-action="request-template-delete" hidden>删除模板</button>
+                <span class="qcp-save-hint"><kbd>Ctrl</kbd> + <kbd>Enter</kbd> 保存</span>
+              </div>
               <div>
                 <button class="qcp-secondary-button" type="button" data-action="cancel-editor">取消</button>
                 <button class="qcp-primary-button" type="submit" data-ref="save-button">保存分类</button>
@@ -167,6 +207,11 @@
     shell: shadow.querySelector(".qcp-shell"),
     panel: getRef("panel"),
     collapsedCount: getRef("collapsed-count"),
+    templateSelect: getRef("template-select"),
+    transferBanner: getRef("transfer-banner"),
+    transferTitle: getRef("transfer-title"),
+    transferDescription: getRef("transfer-description"),
+    transferPaste: getRef("transfer-paste"),
     search: getRef("search"),
     searchClear: getRef("search-clear"),
     addButton: getRef("add-button"),
@@ -185,6 +230,9 @@
     contentInput: getRef("content-input"),
     contentCount: getRef("content-count"),
     saveButton: getRef("save-button"),
+    deleteTemplateButton: getRef("delete-template-button"),
+    templateDeleteConfirmation: getRef("template-delete-confirmation"),
+    templateDeleteMessage: getRef("template-delete-message"),
     resultCount: getRef("result-count"),
     listHint: getRef("list-hint"),
     list: getRef("list"),
@@ -199,6 +247,8 @@
   let state = Model.createDefaultState();
   let panelEnabled = false;
   let panelPosition = Model.normalizePanelPosition(null);
+  let groupClipboard = null;
+  let activeTemplateId = state.selectedTemplateId;
   let activeGroupId = null;
   let searchQuery = "";
   let editorType = null;
@@ -213,26 +263,31 @@
 
   function readStoredState() {
     return new Promise((resolve) => {
-      chrome.storage.local.get([STORAGE_KEY, ENABLED_KEY, POSITION_KEY], (result) => {
-        const error = chrome.runtime.lastError;
-        if (error) {
-          resolve({
-            state: Model.createDefaultState(),
-            enabled: true,
-            position: Model.normalizePanelPosition(null),
-            needsMigration: false
-          });
-          return;
-        }
+      chrome.storage.local.get(
+        [STORAGE_KEY, ENABLED_KEY, POSITION_KEY, GROUP_CLIPBOARD_KEY],
+        (result) => {
+          const error = chrome.runtime.lastError;
+          if (error) {
+            resolve({
+              state: Model.createDefaultState(),
+              enabled: true,
+              position: Model.normalizePanelPosition(null),
+              clipboard: null,
+              needsMigration: false
+            });
+            return;
+          }
 
-        const stored = result[STORAGE_KEY];
-        resolve({
-          state: Model.normalizeState(stored),
-          enabled: result[ENABLED_KEY] !== false,
-          position: Model.normalizePanelPosition(result[POSITION_KEY]),
-          needsMigration: Boolean(stored) && stored.version !== Model.SCHEMA_VERSION
-        });
-      });
+          const stored = result[STORAGE_KEY];
+          resolve({
+            state: Model.normalizeState(stored),
+            enabled: result[ENABLED_KEY] !== false,
+            position: Model.normalizePanelPosition(result[POSITION_KEY]),
+            clipboard: Model.normalizeGroupClipboard(result[GROUP_CLIPBOARD_KEY]),
+            needsMigration: Boolean(stored) && stored.version !== Model.SCHEMA_VERSION
+          });
+        }
+      );
     });
   }
 
@@ -277,10 +332,33 @@
     });
   }
 
-  function getActiveGroup() {
-    return activeGroupId
-      ? state.groups.find((group) => group.id === activeGroupId) || null
+  function persistGroupClipboard() {
+    return new Promise((resolve, reject) => {
+      chrome.storage.local.set({ [GROUP_CLIPBOARD_KEY]: groupClipboard }, () => {
+        const error = chrome.runtime.lastError;
+        if (error) reject(new Error(error.message));
+        else resolve();
+      });
+    }).catch(() => {
+      showToast("整组复制状态保存失败，请稍后重试", "error");
+    });
+  }
+
+  function getActiveTemplate() {
+    return activeTemplateId
+      ? state.templates.find((template) => template.id === activeTemplateId) || null
       : null;
+  }
+
+  function groupsForTemplate(templateId) {
+    return state.groups.filter((group) => group.templateId === templateId);
+  }
+
+  function getActiveGroup() {
+    if (!activeGroupId) return null;
+    return state.groups.find((group) =>
+      group.id === activeGroupId && group.templateId === activeTemplateId
+    ) || null;
   }
 
   function snippetsForGroup(groupId) {
@@ -288,6 +366,13 @@
   }
 
   function render() {
+    let activeTemplate = getActiveTemplate();
+    if (!activeTemplate) {
+      activeTemplate = state.templates[0] || null;
+      activeTemplateId = activeTemplate ? activeTemplate.id : null;
+      if (activeTemplate) state = { ...state, selectedTemplateId: activeTemplate.id };
+    }
+
     let activeGroup = getActiveGroup();
     if (activeGroupId && !activeGroup) {
       activeGroupId = null;
@@ -295,15 +380,19 @@
     }
 
     const isDetail = Boolean(activeGroup);
+    const currentGroups = activeTemplate ? groupsForTemplate(activeTemplate.id) : [];
     refs.shell.dataset.collapsed = String(state.collapsed);
     refs.shell.dataset.level = isDetail ? "snippets" : "groups";
     refs.panel.setAttribute("aria-hidden", String(state.collapsed));
-    refs.collapsedCount.textContent = String(state.groups.length);
+    refs.collapsedCount.textContent = String(currentGroups.length);
     refs.addLabel.textContent = isDetail ? "内容" : "分类";
     refs.addButton.setAttribute("aria-label", isDetail ? "新增二级内容" : "新增一级分类");
     refs.search.placeholder = isDetail ? "搜索当前分类内容" : "搜索分类或内容";
     refs.searchClear.hidden = searchQuery.length === 0;
     refs.levelContext.hidden = !isDetail;
+
+    renderTemplateOptions(activeTemplate);
+    renderTransferBanner(activeTemplate);
 
     if (activeGroup) {
       const itemCount = snippetsForGroup(activeGroup.id).length;
@@ -313,6 +402,46 @@
 
     renderList();
     schedulePanelPosition();
+  }
+
+  function renderTemplateOptions(activeTemplate) {
+    const options = document.createDocumentFragment();
+    for (const template of state.templates) {
+      const option = document.createElement("option");
+      option.value = template.id;
+      option.textContent = template.name;
+      option.title = template.description;
+      options.appendChild(option);
+    }
+    refs.templateSelect.replaceChildren(options);
+    refs.templateSelect.value = activeTemplate ? activeTemplate.id : "";
+    refs.templateSelect.disabled = state.templates.length === 0;
+  }
+
+  function renderTransferBanner(activeTemplate) {
+    if (!groupClipboard || !activeTemplate) {
+      refs.transferBanner.hidden = true;
+      return;
+    }
+
+    const sourceTemplate = state.templates.find((template) =>
+      template.id === groupClipboard.sourceTemplateId
+    );
+    const snippetCount = groupClipboard.snippets.length;
+    const sameTemplate = groupClipboard.sourceTemplateId === activeTemplate.id;
+    refs.transferBanner.hidden = false;
+    refs.transferTitle.textContent = `已复制“${groupClipboard.group.name}”`;
+    refs.transferDescription.textContent = sameTemplate
+      ? `${snippetCount} 条内容 · 切换到其他模板后粘贴`
+      : `${snippetCount} 条内容 · 来自“${sourceTemplate ? sourceTemplate.name : "已删除模板"}”`;
+    refs.transferPaste.disabled = sameTemplate;
+    refs.transferPaste.textContent = sameTemplate ? "等待切换" : "粘贴整组";
+    refs.transferPaste.setAttribute(
+      "aria-label",
+      sameTemplate
+        ? "请先切换到其他模板"
+        : `将“${groupClipboard.group.name}”及其内容粘贴到“${activeTemplate.name}”`
+    );
   }
 
   function renderList() {
@@ -340,10 +469,12 @@
         emptyAction: "新增第一条内容"
       });
     } else {
-      visibleItems = Model.filterGroups(state.groups, state.snippets, searchQuery);
+      const activeTemplate = getActiveTemplate();
+      const allGroups = activeTemplate ? groupsForTemplate(activeTemplate.id) : [];
+      visibleItems = Model.filterGroups(allGroups, state.snippets, searchQuery);
       refs.resultCount.textContent = searchQuery
-        ? `${visibleItems.length} / ${state.groups.length} 个`
-        : `${state.groups.length} 个分类`;
+        ? `${visibleItems.length} / ${allGroups.length} 个`
+        : `${allGroups.length} 个分类`;
       refs.listHint.textContent = searchQuery ? "清空搜索后可排序" : "拖动排序 · 点击进入";
 
       for (const group of visibleItems) {
@@ -352,7 +483,7 @@
 
       configureEmptyState({
         hasResults: visibleItems.length > 0,
-        hasAnyItems: state.groups.length > 0,
+        hasAnyItems: allGroups.length > 0,
         emptyTitle: "还没有分类",
         emptyDescription: "先建立一级分类，再向其中添加可复制内容。",
         emptyAction: "新建第一个分类"
@@ -455,8 +586,20 @@
     } else {
       const actions = document.createElement("div");
       actions.className = "qcp-card-actions qcp-group-actions";
+      const copyGroupButton = createActionButton(
+        "复制整组",
+        "copy-group",
+        group.id,
+        "group",
+        "qcp-text-button qcp-copy-group-button"
+      );
+      copyGroupButton.setAttribute(
+        "aria-label",
+        `复制分类“${group.name}”及其中 ${childSnippets.length} 条内容`
+      );
       actions.append(
         createDragHandle("group", group.id, group.name),
+        copyGroupButton,
         createActionButton("编辑分类", "edit-group", group.id, "group", "qcp-text-button"),
         createActionButton("删除", "request-delete", group.id, "group", "qcp-text-button qcp-delete-button")
       );
@@ -577,13 +720,51 @@
     return new Intl.DateTimeFormat("zh-CN", { month: "short", day: "numeric" }).format(new Date(timestamp));
   }
 
+  function openTemplateEditor(id) {
+    if (!id && state.templates.length >= Model.MAX_TEMPLATES) {
+      showToast(`最多建立 ${Model.MAX_TEMPLATES} 个模板`, "error");
+      return;
+    }
+
+    const template = id ? state.templates.find((item) => item.id === id) : null;
+    if (id && !template) {
+      showToast("这个模板已不存在", "error");
+      return;
+    }
+
+    configureEditor({
+      type: "template",
+      id: template ? template.id : null,
+      eyebrow: "内容模板",
+      heading: template ? "编辑模板" : "新建模板",
+      titleLabel: "模板名称",
+      titlePlaceholder: "例如：求职资料、客服话术",
+      titleValue: template ? template.name : "",
+      titleMax: Model.MAX_TEMPLATE_NAME_LENGTH,
+      contentLabel: "模板说明",
+      contentPlaceholder: "简单说明这个模板的使用场景",
+      contentValue: template ? template.description : "",
+      contentMax: Model.MAX_TEMPLATE_DESCRIPTION_LENGTH,
+      contentRequired: false,
+      canDelete: Boolean(template && state.templates.length > 1),
+      saveLabel: template ? "保存模板" : "建立模板"
+    });
+  }
+
   function openGroupEditor(id) {
+    const activeTemplate = getActiveTemplate();
+    if (!activeTemplate) {
+      showToast("请先选择一个模板", "error");
+      return;
+    }
     if (!id && state.groups.length >= Model.MAX_GROUPS) {
       showToast(`最多建立 ${Model.MAX_GROUPS} 个分类`, "error");
       return;
     }
 
-    const group = id ? state.groups.find((item) => item.id === id) : null;
+    const group = id ? state.groups.find((item) =>
+      item.id === id && item.templateId === activeTemplate.id
+    ) : null;
     if (id && !group) {
       showToast("这个分类已不存在", "error");
       return;
@@ -603,6 +784,7 @@
       contentValue: group ? group.description : "",
       contentMax: Model.MAX_GROUP_DESCRIPTION_LENGTH,
       contentRequired: false,
+      canDelete: false,
       saveLabel: group ? "保存修改" : "保存分类"
     });
   }
@@ -638,6 +820,7 @@
       contentValue: snippet ? snippet.content : "",
       contentMax: Model.MAX_CONTENT_LENGTH,
       contentRequired: true,
+      canDelete: false,
       saveLabel: snippet ? "保存修改" : "保存内容"
     });
   }
@@ -660,17 +843,18 @@
     refs.contentInput.placeholder = settings.contentPlaceholder;
     refs.contentInput.maxLength = settings.contentMax;
     refs.contentInput.required = settings.contentRequired;
-    refs.contentInput.rows = settings.type === "group" ? 3 : 5;
+    refs.contentInput.rows = settings.type === "snippet" ? 5 : 3;
     refs.contentInput.value = settings.contentValue;
     refs.saveButton.textContent = settings.saveLabel;
+    refs.deleteTemplateButton.hidden = !settings.canDelete;
+    refs.templateDeleteConfirmation.hidden = true;
     refs.editor.hidden = false;
     clearValidation();
     updateCharacterCounts();
     renderList();
 
     requestAnimationFrame(() => {
-      refs.titleInput.focus();
-      refs.editor.scrollIntoView({ block: "nearest" });
+      refs.titleInput.focus({ preventScroll: true });
     });
   }
 
@@ -679,6 +863,7 @@
     editingId = null;
     refs.editor.hidden = true;
     refs.editor.reset();
+    refs.templateDeleteConfirmation.hidden = true;
     clearValidation();
 
     if (restoreFocus) {
@@ -699,7 +884,13 @@
   function validateEditor() {
     clearValidation();
     if (!refs.titleInput.value.trim()) {
-      refs.titleInput.setCustomValidity(editorType === "group" ? "请输入分类名称" : "请输入内容名称");
+      refs.titleInput.setCustomValidity(
+        editorType === "template"
+          ? "请输入模板名称"
+          : editorType === "group"
+            ? "请输入分类名称"
+            : "请输入内容名称"
+      );
       refs.titleInput.reportValidity();
       return false;
     }
@@ -718,10 +909,51 @@
       const now = Date.now();
       let message;
 
-      if (editorType === "group") {
+      if (editorType === "template") {
         const values = { name: refs.titleInput.value, description: refs.contentInput.value };
         if (editingId) {
-          const index = state.groups.findIndex((group) => group.id === editingId);
+          const index = state.templates.findIndex((template) => template.id === editingId);
+          if (index === -1) throw new Error("找不到要编辑的模板");
+          const updated = Model.updateTemplate(state.templates[index], values, now);
+          const duplicate = state.templates.some((template) =>
+            template.id !== editingId && template.name.toLocaleLowerCase() === updated.name.toLocaleLowerCase()
+          );
+          if (duplicate) throw new Error("已有同名模板，请换一个名称");
+          const templates = state.templates.slice();
+          templates[index] = updated;
+          state = { ...state, templates };
+          message = "模板修改已保存";
+        } else {
+          const template = Model.createTemplate(values, {
+            now,
+            order: Model.leadingOrder(state.templates)
+          });
+          const duplicate = state.templates.some((item) =>
+            item.name.toLocaleLowerCase() === template.name.toLocaleLowerCase()
+          );
+          if (duplicate) throw new Error("已有同名模板，请换一个名称");
+          activeTemplateId = template.id;
+          activeGroupId = null;
+          state = {
+            ...state,
+            selectedTemplateId: template.id,
+            templates: [template, ...state.templates]
+          };
+          clearSearch(false);
+          message = "模板已建立，可以添加一级分类";
+        }
+      } else if (editorType === "group") {
+        const activeTemplate = getActiveTemplate();
+        if (!activeTemplate) throw new Error("当前模板已不存在");
+        const values = {
+          templateId: activeTemplate.id,
+          name: refs.titleInput.value,
+          description: refs.contentInput.value
+        };
+        if (editingId) {
+          const index = state.groups.findIndex((group) =>
+            group.id === editingId && group.templateId === activeTemplate.id
+          );
           if (index === -1) throw new Error("找不到要编辑的分类");
           const groups = state.groups.slice();
           groups[index] = Model.updateGroup(groups[index], values, now);
@@ -730,13 +962,14 @@
         } else {
           const group = Model.createGroup(values, {
             now,
-            order: Model.leadingOrder(state.groups)
+            order: Model.leadingOrder(groupsForTemplate(activeTemplate.id))
           });
           state = { ...state, groups: [group, ...state.groups] };
           activeGroupId = group.id;
           clearSearch(false);
           message = "分类已建立，可以添加二级内容";
         }
+        touchTemplate(activeTemplate.id, now);
       } else if (editorType === "snippet") {
         const activeGroup = getActiveGroup();
         if (!activeGroup) throw new Error("当前分类已不存在");
@@ -776,16 +1009,29 @@
   }
 
   function touchGroup(groupId, timestamp) {
+    const group = state.groups.find((item) => item.id === groupId);
     state = {
       ...state,
       groups: state.groups.map((group) => group.id === groupId
         ? { ...group, updatedAt: timestamp }
         : group)
     };
+    if (group) touchTemplate(group.templateId, timestamp);
+  }
+
+  function touchTemplate(templateId, timestamp) {
+    state = {
+      ...state,
+      templates: state.templates.map((template) => template.id === templateId
+        ? { ...template, updatedAt: timestamp }
+        : template)
+    };
   }
 
   function navigateToGroup(groupId) {
-    const group = state.groups.find((item) => item.id === groupId);
+    const group = state.groups.find((item) =>
+      item.id === groupId && item.templateId === activeTemplateId
+    );
     if (!group) {
       showToast("这个分类已不存在", "error");
       return;
@@ -796,6 +1042,175 @@
     clearSearch(false);
     render();
     requestAnimationFrame(() => refs.search.focus());
+  }
+
+  function selectTemplate(templateId) {
+    const template = state.templates.find((item) => item.id === templateId);
+    if (!template) {
+      showToast("这个模板已不存在", "error");
+      render();
+      return;
+    }
+
+    activeTemplateId = template.id;
+    activeGroupId = null;
+    pendingDelete = null;
+    closeEditor(false);
+    clearSearch(false);
+    state = { ...state, selectedTemplateId: template.id };
+    render();
+    void persistState();
+  }
+
+  function requestTemplateDelete() {
+    const template = editingId
+      ? state.templates.find((item) => item.id === editingId)
+      : null;
+    if (editorType !== "template" || !template) {
+      showToast("这个模板已不存在", "error");
+      closeEditor(false);
+      return;
+    }
+    if (state.templates.length <= 1) {
+      showToast("至少保留一个模板", "error");
+      return;
+    }
+
+    const groupIds = new Set(groupsForTemplate(template.id).map((group) => group.id));
+    const snippetCount = state.snippets.filter((snippet) => groupIds.has(snippet.groupId)).length;
+    const groupCount = groupIds.size;
+    refs.templateDeleteMessage.textContent = groupCount > 0
+      ? `删除“${template.name}”及其中 ${groupCount} 个分类、${snippetCount} 条内容？`
+      : `确定删除空模板“${template.name}”？`;
+    refs.templateDeleteConfirmation.hidden = false;
+    refs.deleteTemplateButton.hidden = true;
+  }
+
+  function cancelTemplateDelete() {
+    refs.templateDeleteConfirmation.hidden = true;
+    refs.deleteTemplateButton.hidden = state.templates.length <= 1;
+  }
+
+  function confirmTemplateDelete() {
+    const template = editingId
+      ? state.templates.find((item) => item.id === editingId)
+      : null;
+    if (editorType !== "template" || !template) {
+      showToast("这个模板已不存在", "error");
+      closeEditor(false);
+      return;
+    }
+    if (state.templates.length <= 1) {
+      showToast("至少保留一个模板", "error");
+      cancelTemplateDelete();
+      return;
+    }
+
+    const templateIndex = state.templates.findIndex((item) => item.id === template.id);
+    const remainingTemplates = state.templates.filter((item) => item.id !== template.id);
+    const fallbackTemplate = remainingTemplates[Math.min(templateIndex, remainingTemplates.length - 1)]
+      || remainingTemplates[0];
+    const deletedGroups = groupsForTemplate(template.id);
+    const deletedGroupIds = new Set(deletedGroups.map((group) => group.id));
+    const deletedSnippetCount = state.snippets.filter((snippet) =>
+      deletedGroupIds.has(snippet.groupId)
+    ).length;
+
+    activeTemplateId = fallbackTemplate.id;
+    activeGroupId = null;
+    pendingDelete = null;
+    clearSearch(false);
+    state = {
+      ...state,
+      selectedTemplateId: fallbackTemplate.id,
+      templates: remainingTemplates,
+      groups: state.groups.filter((group) => !deletedGroupIds.has(group.id)),
+      snippets: state.snippets.filter((snippet) => !deletedGroupIds.has(snippet.groupId))
+    };
+    closeEditor(false);
+    render();
+    void persistState();
+    showToast(
+      deletedGroups.length > 0
+        ? `已删除模板及 ${deletedGroups.length} 个分类、${deletedSnippetCount} 条内容`
+        : `已删除模板：${template.name}`
+    );
+  }
+
+  function copyGroup(groupId) {
+    const group = state.groups.find((item) =>
+      item.id === groupId && item.templateId === activeTemplateId
+    );
+    if (!group) {
+      showToast("这个分类已不存在", "error");
+      return;
+    }
+
+    groupClipboard = Model.createGroupClipboard(
+      group,
+      snippetsForGroup(group.id),
+      { now: Date.now() }
+    );
+    renderTransferBanner(getActiveTemplate());
+    void persistGroupClipboard();
+    showToast(`已复制整组“${group.name}”，切换模板后可粘贴`);
+  }
+
+  function clearGroupClipboard(announce) {
+    groupClipboard = null;
+    renderTransferBanner(getActiveTemplate());
+    void persistGroupClipboard();
+    if (announce !== false) showToast("已清除整组复制暂存");
+  }
+
+  function pasteGroupClipboard() {
+    const activeTemplate = getActiveTemplate();
+    if (!groupClipboard) {
+      showToast("请先复制一个一级分类", "error");
+      return;
+    }
+    if (!activeTemplate) {
+      showToast("请先选择目标模板", "error");
+      return;
+    }
+    if (groupClipboard.sourceTemplateId === activeTemplate.id) {
+      showToast("请切换到其他模板后再粘贴", "error");
+      return;
+    }
+    if (state.groups.length >= Model.MAX_GROUPS) {
+      showToast(`最多建立 ${Model.MAX_GROUPS} 个分类`, "error");
+      return;
+    }
+    if (state.snippets.length + groupClipboard.snippets.length > Model.MAX_SNIPPETS) {
+      showToast(`粘贴后将超过 ${Model.MAX_SNIPPETS} 条内容上限`, "error");
+      return;
+    }
+
+    try {
+      const now = Date.now();
+      const currentGroups = groupsForTemplate(activeTemplate.id);
+      const pasted = Model.instantiateGroupClipboard(
+        groupClipboard,
+        activeTemplate.id,
+        currentGroups,
+        { now, order: Model.leadingOrder(currentGroups) }
+      );
+      state = {
+        ...state,
+        groups: [pasted.group, ...state.groups],
+        snippets: [...pasted.snippets, ...state.snippets]
+      };
+      touchTemplate(activeTemplate.id, now);
+      activeGroupId = pasted.group.id;
+      pendingDelete = null;
+      closeEditor(false);
+      clearSearch(false);
+      render();
+      void persistState();
+      showToast(`已粘贴“${pasted.group.name}”及 ${pasted.snippets.length} 条内容`);
+    } catch (error) {
+      showToast(error.message || "整组粘贴失败", "error");
+    }
   }
 
   function navigateToGroups() {
@@ -1060,21 +1475,28 @@
 
   function confirmDelete(type, id) {
     if (type === "group") {
-      const group = state.groups.find((item) => item.id === id);
+      const group = state.groups.find((item) =>
+        item.id === id && item.templateId === activeTemplateId
+      );
       if (!group) return;
       const childCount = snippetsForGroup(id).length;
+      const now = Date.now();
       state = {
         ...state,
         groups: state.groups.filter((item) => item.id !== id),
         snippets: state.snippets.filter((snippet) => snippet.groupId !== id)
       };
+      touchTemplate(group.templateId, now);
       if (activeGroupId === id) activeGroupId = null;
       pendingDelete = null;
       render();
       void persistState();
       showToast(childCount > 0 ? `已删除分类及 ${childCount} 条内容` : `已删除分类：${group.name}`);
     } else {
-      const snippet = state.snippets.find((item) => item.id === id);
+      const activeGroup = getActiveGroup();
+      const snippet = activeGroup
+        ? state.snippets.find((item) => item.id === id && item.groupId === activeGroup.id)
+        : null;
       if (!snippet) return;
       state = { ...state, snippets: state.snippets.filter((item) => item.id !== id) };
       touchGroup(snippet.groupId, Date.now());
@@ -1088,7 +1510,7 @@
 
   function orderedItemsFor(type) {
     return type === "group"
-      ? Model.filterGroups(state.groups, state.snippets, "")
+      ? Model.filterGroups(groupsForTemplate(activeTemplateId), state.snippets, "")
       : Model.filterSnippets(snippetsForGroup(activeGroupId), "");
   }
 
@@ -1101,7 +1523,13 @@
 
     const reordered = Model.reorderItems(items, sourceId, targetId, placeAfter);
     if (type === "group") {
-      state = { ...state, groups: reordered };
+      const orderById = new Map(reordered.map((item) => [item.id, item.order]));
+      state = {
+        ...state,
+        groups: state.groups.map((group) => orderById.has(group.id)
+          ? { ...group, order: orderById.get(group.id) }
+          : group)
+      };
     } else {
       const orderById = new Map(reordered.map((item) => [item.id, item.order]));
       state = {
@@ -1247,6 +1675,14 @@
     }
 
     if (action === "toggle") togglePanel();
+    else if (action === "add-template") openTemplateEditor(null);
+    else if (action === "edit-template") {
+      const activeTemplate = getActiveTemplate();
+      if (activeTemplate) openTemplateEditor(activeTemplate.id);
+    }
+    else if (action === "request-template-delete") requestTemplateDelete();
+    else if (action === "cancel-template-delete") cancelTemplateDelete();
+    else if (action === "confirm-template-delete") confirmTemplateDelete();
     else if (action === "add") getActiveGroup() ? openSnippetEditor(null) : openGroupEditor(null);
     else if (action === "cancel-editor") closeEditor(true);
     else if (action === "clear-search") { clearSearch(true); renderList(); }
@@ -1263,6 +1699,9 @@
     }
     else if (action === "edit-snippet") openSnippetEditor(id);
     else if (action === "copy") void copySnippet(id, target);
+    else if (action === "copy-group") copyGroup(id);
+    else if (action === "paste-group") pasteGroupClipboard();
+    else if (action === "clear-group-copy") clearGroupClipboard(true);
     else if (action === "request-delete") { pendingDelete = { type: entity, id }; renderList(); }
     else if (action === "cancel-delete") { pendingDelete = null; renderList(); }
     else if (action === "confirm-delete") confirmDelete(entity, id);
@@ -1353,6 +1792,10 @@
     renderList();
   });
 
+  refs.templateSelect.addEventListener("change", () => {
+    selectTemplate(refs.templateSelect.value);
+  });
+
   refs.titleInput.addEventListener("input", () => {
     refs.titleInput.setCustomValidity("");
     updateCharacterCounts();
@@ -1397,6 +1840,7 @@
       ok: true,
       enabled: panelEnabled,
       collapsed: state.collapsed,
+      templates: state.templates.length,
       groups: state.groups.length,
       snippets: state.snippets.length
     });
@@ -1404,6 +1848,7 @@
 
   chrome.storage.onChanged.addListener((changes, areaName) => {
     if (areaName !== "local") return;
+    let shouldMigrateState = false;
 
     if (changes[ENABLED_KEY]) {
       setPanelEnabled(changes[ENABLED_KEY].newValue !== false);
@@ -1414,19 +1859,46 @@
       schedulePanelPosition();
     }
 
-    if (!changes[STORAGE_KEY]) return;
-    state = Model.normalizeState(changes[STORAGE_KEY].newValue);
-    if (activeGroupId && !getActiveGroup()) activeGroupId = null;
-    if (editingId) {
-      const source = editorType === "group" ? state.groups : state.snippets;
-      if (!source.some((item) => item.id === editingId)) closeEditor(false);
+    if (changes[GROUP_CLIPBOARD_KEY]) {
+      groupClipboard = Model.normalizeGroupClipboard(changes[GROUP_CLIPBOARD_KEY].newValue);
     }
-    render();
+
+    if (changes[STORAGE_KEY]) {
+      const incomingState = changes[STORAGE_KEY].newValue;
+      shouldMigrateState = Boolean(incomingState)
+        && incomingState.version !== Model.SCHEMA_VERSION;
+      const nextState = Model.normalizeState(incomingState);
+      const templateChanged = activeTemplateId !== nextState.selectedTemplateId;
+      state = nextState;
+      activeTemplateId = state.selectedTemplateId;
+
+      if (templateChanged) {
+        activeGroupId = null;
+        pendingDelete = null;
+        closeEditor(false);
+        clearSearch(false);
+      } else {
+        if (activeGroupId && !getActiveGroup()) activeGroupId = null;
+        if (editingId) {
+          const source = editorType === "template"
+            ? state.templates
+            : editorType === "group"
+              ? state.groups
+              : state.snippets;
+          if (!source.some((item) => item.id === editingId)) closeEditor(false);
+        }
+      }
+    }
+
+    if (changes[STORAGE_KEY] || changes[GROUP_CLIPBOARD_KEY]) render();
+    if (shouldMigrateState) void persistState();
   });
 
   readStoredState().then((stored) => {
     state = stored.state;
     panelPosition = stored.position;
+    groupClipboard = stored.clipboard;
+    activeTemplateId = state.selectedTemplateId;
     render();
     setPanelEnabled(stored.enabled);
     if (stored.needsMigration) void persistState();

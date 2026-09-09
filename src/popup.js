@@ -13,6 +13,7 @@
     enabledLabel: getRef("enabled-label"),
     enabledToggle: getRef("enabled-toggle"),
     version: getRef("version"),
+    templateCount: getRef("template-count"),
     groupCount: getRef("group-count"),
     snippetCount: getRef("snippet-count"),
     openButton: getRef("open-button"),
@@ -87,8 +88,10 @@
   }
 
   function renderCounts(state) {
+    const templates = state && Array.isArray(state.templates) ? state.templates.length : 1;
     const groups = state && Array.isArray(state.groups) ? state.groups.length : 0;
     const snippets = state && Array.isArray(state.snippets) ? state.snippets.length : 0;
+    refs.templateCount.textContent = String(templates);
     refs.groupCount.textContent = String(groups);
     refs.snippetCount.textContent = String(snippets);
   }

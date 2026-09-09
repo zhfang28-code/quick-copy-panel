@@ -193,7 +193,7 @@ input:focus-visible + .switch-track {
 
 .summary {
   display: grid;
-  grid-template-columns: 1fr 1px 1fr;
+  grid-template-columns: 1fr 1px 1fr 1px 1fr;
   align-items: center;
   margin: 14px 16px 0;
   padding: 13px 8px;
@@ -211,12 +211,12 @@ input:focus-visible + .switch-track {
 
 .summary strong {
   color: #5e4ce0;
-  font-size: 20px;
+  font-size: 18px;
 }
 
 .summary span {
   color: #7e8399;
-  font-size: 12px;
+  font-size: 11px;
 }
 
 .summary > i {
