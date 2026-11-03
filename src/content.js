@@ -246,6 +246,10 @@
 
   let state = Model.createDefaultState();
   let panelEnabled = false;
+  let globallyEnabled = false;
+  let pageKey;
+  let pageBlocked = true;
+  let pageReadVersion = 0;
   let panelPosition = Model.normalizePanelPosition(null);
   let groupClipboard = null;
   let activeTemplateId = state.selectedTemplateId;
@@ -1426,8 +1430,8 @@
     return true;
   }
 
-  function setPanelEnabled(enabled) {
-    panelEnabled = enabled !== false;
+  function renderPanelVisibility() {
+    panelEnabled = globallyEnabled && !pageBlocked;
     host.style.setProperty("display", panelEnabled ? "block" : "none", "important");
     host.setAttribute("aria-hidden", String(!panelEnabled));
     if (!panelEnabled) {
@@ -1437,7 +1441,34 @@
     if (panelEnabled) schedulePanelPosition();
   }
 
+  function setPanelEnabled(enabled) {
+    globallyEnabled = enabled !== false;
+    renderPanelVisibility();
+  }
+
+  function refreshPageRule() {
+    const url = new URL(location.href);
+    const nextKey = ["http:", "https:"].includes(url.protocol)
+      ? "quickCopyPanelDisabledPage:" + url.origin + url.pathname
+      : null;
+    if (nextKey === pageKey) return;
+
+    pageKey = nextKey;
+    const readVersion = ++pageReadVersion;
+    pageBlocked = Boolean(pageKey);
+    renderPanelVisibility();
+    if (!pageKey) return;
+
+    chrome.storage.local.get(pageKey, (result) => {
+      const error = chrome.runtime.lastError;
+      if (error || readVersion !== pageReadVersion) return;
+      pageBlocked = result[pageKey] === true;
+      renderPanelVisibility();
+    });
+  }
+
   function openPanel() {
+    if (pageBlocked) return;
     const shouldSaveLayout = state.collapsed;
     setPanelEnabled(true);
     if (shouldSaveLayout) {
@@ -1450,6 +1481,8 @@
   }
 
   function togglePanel() {
+    refreshPageRule();
+    if (pageBlocked) return;
     if (!panelEnabled) {
       openPanel();
       return;
@@ -1825,6 +1858,7 @@
 
   chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
     if (!message || typeof message !== "object") return;
+    refreshPageRule();
 
     if (message.type === TOGGLE_MESSAGE) {
       togglePanel();
@@ -1839,6 +1873,7 @@
     sendResponse({
       ok: true,
       enabled: panelEnabled,
+      pageKey,
       collapsed: state.collapsed,
       templates: state.templates.length,
       groups: state.groups.length,
@@ -1849,6 +1884,12 @@
   chrome.storage.onChanged.addListener((changes, areaName) => {
     if (areaName !== "local") return;
     let shouldMigrateState = false;
+
+    if (pageKey && changes[pageKey]) {
+      pageReadVersion += 1;
+      pageBlocked = changes[pageKey].newValue === true;
+      renderPanelVisibility();
+    }
 
     if (changes[ENABLED_KEY]) {
       setPanelEnabled(changes[ENABLED_KEY].newValue !== false);
@@ -1894,6 +1935,10 @@
     if (shouldMigrateState) void persistState();
   });
 
+  window.navigation?.addEventListener("currententrychange", refreshPageRule);
+  window.addEventListener("popstate", refreshPageRule);
+  window.addEventListener("pageshow", refreshPageRule);
+  refreshPageRule();
   readStoredState().then((stored) => {
     state = stored.state;
     panelPosition = stored.position;

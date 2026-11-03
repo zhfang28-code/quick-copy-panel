@@ -12,6 +12,8 @@
     statusDot: getRef("status-dot"),
     enabledLabel: getRef("enabled-label"),
     enabledToggle: getRef("enabled-toggle"),
+    pageToggle: getRef("page-toggle"),
+    pageRule: getRef("page-rule"),
     version: getRef("version"),
     templateCount: getRef("template-count"),
     groupCount: getRef("group-count"),
@@ -23,11 +25,13 @@
   let enabled = true;
   let activeTabId = null;
   let pageReachable = false;
-  let busy = false;
+  let pageKey = null;
+  let pageBlocked = false;
+  let busy = true;
 
-  function readStorage() {
+  function readStorage(keys = [STATE_KEY, ENABLED_KEY]) {
     return new Promise((resolve, reject) => {
-      chrome.storage.local.get([STATE_KEY, ENABLED_KEY], (result) => {
+      chrome.storage.local.get(keys, (result) => {
         const error = chrome.runtime.lastError;
         if (error) reject(new Error(error.message));
         else resolve(result);
@@ -81,10 +85,25 @@
     refs.enabledToggle.disabled = busy;
     refs.enabledLabel.textContent = enabled ? "已开启" : "已关闭";
     refs.statusDot.dataset.off = String(!enabled);
-    refs.openButton.disabled = busy;
+    refs.pageToggle.checked = pageBlocked;
+    refs.pageToggle.disabled = busy || !pageKey;
+    refs.pageRule.hidden = !pageKey;
+    refs.openButton.disabled = busy || pageBlocked;
     refs.openButton.querySelector("span").textContent = enabled
       ? "在当前网页打开并展开"
       : "开启并在当前网页展开";
+  }
+
+  function showPageState() {
+    if (pageBlocked) {
+      setPageMessage("当前网址已停用。取消勾选即可恢复。");
+    } else if (pageReachable) {
+      setPageMessage(enabled
+        ? "当前网页可使用，点击按钮可立即展开。"
+        : "全局悬浮面板已关闭。");
+    } else {
+      setPageMessage("当前页面无法连接到面板。普通网页可刷新后重试。", "warning");
+    }
   }
 
   function renderCounts(state) {
@@ -111,7 +130,9 @@
       });
       pageReachable = Boolean(response && response.ok);
 
-      if (pageReachable) {
+      if (pageBlocked) {
+        showPageState();
+      } else if (pageReachable) {
         setPageMessage(
           enabled ? "当前网页已显示悬浮面板。" : "当前网页已完全隐藏悬浮面板。",
           "success"
@@ -136,8 +157,25 @@
     void changeEnabled(refs.enabledToggle.checked);
   });
 
+  refs.pageToggle.addEventListener("change", async () => {
+    if (busy || !pageKey) return;
+    const blocked = refs.pageToggle.checked;
+    busy = true;
+    renderEnabledState();
+    try {
+      await writeStorage({ [pageKey]: blocked });
+      pageBlocked = blocked;
+      showPageState();
+    } catch {
+      setPageMessage("网址设置保存失败，请稍后重试。", "warning");
+    } finally {
+      busy = false;
+      renderEnabledState();
+    }
+  });
+
   refs.openButton.addEventListener("click", async () => {
-    if (busy) return;
+    if (busy || pageBlocked) return;
     busy = true;
     enabled = true;
     renderEnabledState();
@@ -147,10 +185,10 @@
       const response = await sendToCurrentPage({ type: OPEN_MESSAGE });
       pageReachable = Boolean(response && response.ok);
       setPageMessage(
-        pageReachable
+        response?.enabled
           ? "面板已在当前网页展开，可以开始使用。"
           : "已开启；请切换到普通网页并刷新后使用。",
-        pageReachable ? "success" : "warning"
+        response?.enabled ? "success" : "warning"
       );
     } catch {
       setPageMessage("暂时无法打开面板，请稍后重试。", "warning");
@@ -167,6 +205,11 @@
       renderEnabledState();
     }
     if (changes[STATE_KEY]) renderCounts(changes[STATE_KEY].newValue);
+    if (pageKey && changes[pageKey]) {
+      pageBlocked = changes[pageKey].newValue === true;
+      renderEnabledState();
+      showPageState();
+    }
   });
 
   async function start() {
@@ -181,18 +224,18 @@
 
       const response = await sendToCurrentPage({ type: GET_STATUS_MESSAGE });
       pageReachable = Boolean(response && response.ok);
-      setPageMessage(
-        pageReachable
-          ? enabled
-            ? "当前网页可使用，点击按钮可立即展开。"
-            : "面板当前已关闭，可通过上方开关开启。"
-          : "此页面受浏览器保护，无法注入悬浮面板。",
-        pageReachable ? "neutral" : "warning"
-      );
+      if (response?.pageKey) {
+        const rule = await readStorage(response.pageKey);
+        pageKey = response.pageKey;
+        pageBlocked = rule[pageKey] === true;
+      }
+      showPageState();
     } catch {
-      renderEnabledState();
       renderCounts(null);
       setPageMessage("读取本机设置失败，请重新打开弹窗。", "warning");
+    } finally {
+      busy = false;
+      renderEnabledState();
     }
   }
 

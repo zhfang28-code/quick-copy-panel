@@ -16,10 +16,15 @@
         </span>
         <label class="switch">
           <span class="visually-hidden">开启或关闭悬浮面板</span>
-          <input data-ref="enabled-toggle" type="checkbox" role="switch" />
+          <input data-ref="enabled-toggle" type="checkbox" role="switch" disabled />
           <span class="switch-track" aria-hidden="true"><i></i></span>
         </label>
       </section>
+
+      <label class="page-rule" data-ref="page-rule" hidden>
+        <input data-ref="page-toggle" type="checkbox" disabled />
+        <span>在当前网址停用</span>
+      </label>
 
       <section class="hero">
         <div class="brand-mark" aria-hidden="true">
@@ -28,7 +33,7 @@
           </svg>
         </div>
         <div>
-          <span class="version" data-ref="version">v1.5.0</span>
+          <span class="version" data-ref="version">v1.6.0</span>
           <h1>随手复制</h1>
           <p>常用文字，一点即用</p>
         </div>
@@ -51,7 +56,7 @@
         </div>
       </section>
 
-      <button class="open-button" data-ref="open-button" type="button">
+      <button class="open-button" data-ref="open-button" type="button" disabled>
         <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12h14m-6-6 6 6-6 6" /></svg>
         <span>在当前网页打开并展开</span>
       </button>
